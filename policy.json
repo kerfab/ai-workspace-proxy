@@ -1,0 +1,225 @@
+{
+  "rules": [
+    {
+      "name": "list_messages",
+      "method": "GET",
+      "path_regex": "^/gmail/v1/users/me/messages$"
+    },
+    {
+      "name": "get_message",
+      "method": "GET",
+      "path_regex": "^/gmail/v1/users/me/messages/[^/]+$"
+    },
+    {
+      "name": "get_message_attachment",
+      "method": "GET",
+      "path_regex": "^/gmail/v1/users/me/messages/[^/]+/attachments/[^/]+$"
+    },
+    {
+      "name": "list_threads",
+      "method": "GET",
+      "path_regex": "^/gmail/v1/users/me/threads$"
+    },
+    {
+      "name": "get_thread",
+      "method": "GET",
+      "path_regex": "^/gmail/v1/users/me/threads/[^/]+$"
+    },
+    {
+      "name": "list_drafts",
+      "method": "GET",
+      "path_regex": "^/gmail/v1/users/me/drafts$"
+    },
+    {
+      "name": "get_draft",
+      "method": "GET",
+      "path_regex": "^/gmail/v1/users/me/drafts/[^/]+$"
+    },
+    {
+      "name": "create_draft",
+      "method": "POST",
+      "path_regex": "^/gmail/v1/users/me/drafts$"
+    },
+    {
+      "name": "update_draft",
+      "method": "PUT",
+      "path_regex": "^/gmail/v1/users/me/drafts/[^/]+$"
+    },
+    {
+      "name": "list_labels",
+      "method": "GET",
+      "path_regex": "^/gmail/v1/users/me/labels$"
+    },
+    {
+      "name": "get_label",
+      "method": "GET",
+      "path_regex": "^/gmail/v1/users/me/labels/[^/]+$"
+    },
+    {
+      "name": "create_label",
+      "method": "POST",
+      "path_regex": "^/gmail/v1/users/me/labels$"
+    },
+    {
+      "name": "patch_label",
+      "method": "PATCH",
+      "path_regex": "^/gmail/v1/users/me/labels/[^/]+$"
+    },
+    {
+      "name": "delete_label",
+      "method": "DELETE",
+      "path_regex": "^/gmail/v1/users/me/labels/[^/]+$"
+    },
+    {
+      "name": "modify_message",
+      "method": "POST",
+      "path_regex": "^/gmail/v1/users/me/messages/[^/]+/modify$",
+      "body_policy": "gmail_label_modify"
+    },
+    {
+      "name": "modify_thread",
+      "method": "POST",
+      "path_regex": "^/gmail/v1/users/me/threads/[^/]+/modify$",
+      "body_policy": "gmail_label_modify"
+    },
+    {
+      "name": "list_calendar_list",
+      "method": "GET",
+      "path_regex": "^/calendar/v3/users/me/calendarList$"
+    },
+    {
+      "name": "get_calendar_list_entry",
+      "method": "GET",
+      "path_regex": "^/calendar/v3/users/me/calendarList/[^/]+$"
+    },
+    {
+      "name": "list_calendar_events",
+      "method": "GET",
+      "path_regex": "^/calendar/v3/calendars/[^/]+/events$"
+    },
+    {
+      "name": "get_calendar_event",
+      "method": "GET",
+      "path_regex": "^/calendar/v3/calendars/[^/]+/events/[^/]+$"
+    },
+    {
+      "name": "list_drive_files",
+      "method": "GET",
+      "path_regex": "^/drive/v3/files$"
+    },
+    {
+      "name": "get_drive_file",
+      "method": "GET",
+      "path_regex": "^/drive/v3/files/[^/]+$"
+    },
+    {
+      "name": "export_drive_file",
+      "method": "GET",
+      "path_regex": "^/drive/v3/files/[^/]+/export$"
+    },
+    {
+      "name": "create_drive_file",
+      "method": "POST",
+      "path_regex": "^/drive/v3/files$"
+    },
+    {
+      "name": "update_drive_file_patch",
+      "method": "PATCH",
+      "path_regex": "^/drive/v3/files/[^/]+$"
+    },
+    {
+      "name": "update_drive_file_put",
+      "method": "PUT",
+      "path_regex": "^/drive/v3/files/[^/]+$"
+    },
+    {
+      "name": "create_document",
+      "method": "POST",
+      "path_regex": "^/v1/documents$"
+    },
+    {
+      "name": "get_document",
+      "method": "GET",
+      "path_regex": "^/v1/documents/[^/:]+$"
+    },
+    {
+      "name": "batch_update_document",
+      "method": "POST",
+      "path_regex": "^/v1/documents/[^/:]+:batchUpdate$"
+    },
+    {
+      "name": "create_spreadsheet",
+      "method": "POST",
+      "path_regex": "^/v4/spreadsheets$"
+    },
+    {
+      "name": "get_spreadsheet",
+      "method": "GET",
+      "path_regex": "^/v4/spreadsheets/[^/]+$"
+    },
+    {
+      "name": "batch_update_spreadsheet",
+      "method": "POST",
+      "path_regex": "^/v4/spreadsheets/[^/]+:batchUpdate$"
+    },
+    {
+      "name": "get_spreadsheet_values",
+      "method": "GET",
+      "path_regex": "^/v4/spreadsheets/[^/]+/values/.+$"
+    },
+    {
+      "name": "update_spreadsheet_values",
+      "method": "PUT",
+      "path_regex": "^/v4/spreadsheets/[^/]+/values/.+$"
+    },
+    {
+      "name": "batch_update_spreadsheet_values",
+      "method": "POST",
+      "path_regex": "^/v4/spreadsheets/[^/]+/values:batchUpdate$"
+    },
+    {
+      "name": "create_presentation",
+      "method": "POST",
+      "path_regex": "^/v1/presentations$"
+    },
+    {
+      "name": "get_presentation",
+      "method": "GET",
+      "path_regex": "^/v1/presentations/[^/]+$"
+    },
+    {
+      "name": "batch_update_presentation",
+      "method": "POST",
+      "path_regex": "^/v1/presentations/[^/]+:batchUpdate$"
+    },
+    {
+      "name": "get_presentation_page",
+      "method": "GET",
+      "path_regex": "^/v1/presentations/[^/]+/pages/[^/]+$"
+    }
+  ],
+  "body_policies": {
+    "gmail_label_modify": {
+      "allowed_top_level_keys": [
+        "addLabelIds",
+        "removeLabelIds"
+      ],
+      "deny_add_label_ids": [
+        "TRASH",
+        "SPAM",
+        "UNREAD"
+      ],
+      "deny_remove_label_ids": [
+        "TRASH",
+        "SPAM",
+        "SENT",
+        "DRAFT"
+      ],
+      "allow_remove_label_ids": [
+        "INBOX",
+        "UNREAD",
+        "*"
+      ]
+    }
+  }
+}
