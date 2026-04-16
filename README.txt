@@ -1,14 +1,21 @@
 AI Workspace Proxy
 ===================
 
-Originally developed by Fabien Kerbouci for The Sandbox / Animoca Brands.
+Developed by Fabien Kerbouci for The Sandbox / Animoca Brands.
+A combination of ChatGPT and human manpower was used for development.
 
 Proof-of-concept notice
 -----------------------
-
 This project is provided as tested proof-of-concept software. Its purpose is to demonstrate how a middleware proxy can help enforce stronger security controls when AI agents access Google Workspace services.
 
 In particular, it shows how a proxy can reduce operational risk even when Google OAuth scopes are broader than the exact set of actions that should be allowed to an AI agent. It also hides the permissive Google OAuth credentials to AI agents, by delivering a middleware API key instead.
+
+Limitations & Security Recommendations
+--------------------------------------
+The middleware proxy has been tested for deployment for corporate use. However, take note of the following limitations:
+- No HTTPS support by default, it is recommend to deploy the proxy behind an HTTPS proxy (e.g. Cloudflare).
+- The code of the proxy has been reviewed, and it embeds security features, such as proper user isolation & encryption at rest. However, it was not formally pentested.
+- Consider firewalling the workspace proxy, with an authentication layer (e.g.: Cloudflare Access, IP whitelisting, etc.) so that it is not accessible from the public Internet. This is to mitigate risks of malicious exploitation for cases your Workspace Proxy API key leaks.
 
 Overview
 --------
@@ -84,21 +91,6 @@ Google Slides
 
 The exact allowlist is defined by `policy.json`, not by this README. If `policy.json` changes, the effective surface of the proxy changes with it.
 
-Important scope note
---------------------
-The current `policy.json` is no longer read-only. It authorizes Gmail modification, Calendar read access, Drive create/update/read access, and create/read/update access for Docs, Sheets, and Slides.
-
-To support the current policy, the Google Workspace OAuth client should request and be configured for scopes broad enough to cover those actions. In practice, that means a grant at least as broad as:
-- `https://www.googleapis.com/auth/gmail.modify`
-- `https://www.googleapis.com/auth/gmail.labels`
-- `https://www.googleapis.com/auth/calendar.readonly`
-- `https://www.googleapis.com/auth/drive`
-- `https://www.googleapis.com/auth/documents`
-- `https://www.googleapis.com/auth/spreadsheets`
-- `https://www.googleapis.com/auth/presentations`
-
-The proxy then enforces a stricter policy at the relay layer with `policy.json`.
-
 Important login and admin note
 ------------------------------
 - Proxy login with Google is separate from the later Google Workspace OAuth step.
@@ -106,42 +98,6 @@ Important login and admin note
 - Admin access is driven only by `ADMIN_EMAILS`.
 - At least one admin email must be configured at startup.
 - During Google Workspace connect, the selected account must match the signed-in proxy user email.
-
-Default routes
---------------
-User:
-- GET  /                             dashboard or login page
-- GET  /auth/google/login            proxy login via Google
-- GET  /auth/google/callback
-- POST /logout
-- GET  /auth/workspace/connect       start Google Workspace OAuth connection (must be logged in)
-- GET  /auth/workspace/callback
-- POST /auth/workspace/disconnect
-- GET  /api/token/reveal             reveal proxy API token (web session required)
-- POST /api/token/rotate             rotate the proxy API token
-- POST /workspace/drive-folders/add
-- POST /workspace/drive-folders/{id}/update
-- POST /workspace/drive-folders/{id}/delete
-
-Backward-compatible aliases:
-- GET  /auth/gmail/connect
-- GET  /auth/gmail/callback
-- POST /auth/gmail/disconnect
-
-Admin:
-- GET  /admin/users
-- GET  /admin/users/{id}
-- POST /admin/users/{id}/suspend
-- POST /admin/users/{id}/unsuspend
-- POST /admin/users/{id}/delete
-
-Proxy:
-- ANY  /gmail.googleapis.com/*       policy-gated relay to Gmail API
-- ANY  /calendar.googleapis.com/*    policy-gated relay to Google Calendar API
-- ANY  /drive.googleapis.com/*       policy-gated relay to Google Drive API
-- ANY  /docs.googleapis.com/*        policy-gated relay to Google Docs API
-- ANY  /sheets.googleapis.com/*      policy-gated relay to Google Sheets API
-- ANY  /slides.googleapis.com/*      policy-gated relay to Google Slides API
 
 Google Cloud admin setup
 ------------------------
@@ -216,9 +172,6 @@ Users can configure up to 5 allowed Google Drive folders from the dashboard. Eac
 - a unique Reference Name
 - an extracted internal folder ID
 - allowed file types (Docs, Sheets, Slides, generic Drive files)
-
-For Drive/Docs/Sheets/Slides write requests, pass the query parameter:
-- `driveRef=<Reference Name>`
 
 The proxy resolves that Reference Name to a stored folder configuration and enforces folder-level restrictions server-side.
 
