@@ -50,9 +50,9 @@ type Config struct {
 	WorkspaceClientID     string
 	WorkspaceClientSecret string
 
-	EncryptionKey      []byte
-	AllowedEmailDomain string
-	AdminEmails        map[string]bool
+	EncryptionKey       []byte
+	AllowedEmailDomains map[string]bool
+	AdminEmails         map[string]bool
 }
 
 func LoadConfig() (*Config, error) {
@@ -70,7 +70,7 @@ func LoadConfig() (*Config, error) {
 		MaxRequestBodyBytes:   int64(getenvIntDefault("MAX_REQUEST_BODY_BYTES", defaultMaxRequestBody)),
 		WorkspaceClientID:     os.Getenv("GOOGLE_WORKSPACE_CLIENT_ID"),
 		WorkspaceClientSecret: os.Getenv("GOOGLE_WORKSPACE_CLIENT_SECRET"),
-		AllowedEmailDomain:    normalizeDomain(os.Getenv("ALLOWED_EMAIL_DOMAIN")),
+		AllowedEmailDomains:   parseAllowedEmailDomains(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
 		AdminEmails:           map[string]bool{},
 	}
 	if cfg.BaseURL == "" {
@@ -79,8 +79,8 @@ func LoadConfig() (*Config, error) {
 	if cfg.WorkspaceClientID == "" || cfg.WorkspaceClientSecret == "" {
 		return nil, fmt.Errorf("GOOGLE_WORKSPACE_CLIENT_ID and GOOGLE_WORKSPACE_CLIENT_SECRET are required")
 	}
-	if cfg.AllowedEmailDomain == "" {
-		return nil, fmt.Errorf("ALLOWED_EMAIL_DOMAIN is required")
+	if len(cfg.AllowedEmailDomains) == 0 {
+		return nil, fmt.Errorf("ALLOWED_EMAIL_DOMAINS is required")
 	}
 	key, err := parseEncryptionKey(strings.TrimSpace(os.Getenv("PROXY_ENCRYPTION_KEY")))
 	if err != nil {
@@ -95,7 +95,7 @@ func LoadConfig() (*Config, error) {
 			continue
 		}
 		if !cfg.IsEmailAllowed(part) {
-			return nil, fmt.Errorf("admin email %q is outside ALLOWED_EMAIL_DOMAIN", part)
+			return nil, fmt.Errorf("admin email %q is outside ALLOWED_EMAIL_DOMAINS", part)
 		}
 		cfg.AdminEmails[part] = true
 		adminCount++
@@ -116,7 +116,7 @@ func (c *Config) IsEmailAllowed(email string) bool {
 	if len(parts) != 2 {
 		return false
 	}
-	return parts[1] == c.AllowedEmailDomain
+	return c.AllowedEmailDomains[parts[1]]
 }
 
 func normalizeEmail(email string) string {
@@ -127,6 +127,17 @@ func normalizeDomain(domain string) string {
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	domain = strings.TrimPrefix(domain, "@")
 	return domain
+}
+
+func parseAllowedEmailDomains(raw string) map[string]bool {
+	out := map[string]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		domain := normalizeDomain(part)
+		if domain != "" {
+			out[domain] = true
+		}
+	}
+	return out
 }
 
 func parseEncryptionKey(raw string) ([]byte, error) {

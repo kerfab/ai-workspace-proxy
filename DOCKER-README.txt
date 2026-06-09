@@ -30,7 +30,7 @@ Required at runtime:
 - GOOGLE_WORKSPACE_CLIENT_ID
 - GOOGLE_WORKSPACE_CLIENT_SECRET
 - PROXY_ENCRYPTION_KEY
-- ALLOWED_EMAIL_DOMAIN
+- ALLOWED_EMAIL_DOMAINS
 - ADMIN_EMAILS
 
 See file config.env.example for more fine-tuning variables.
@@ -50,7 +50,7 @@ docker run -d \
   -e GOOGLE_WORKSPACE_CLIENT_ID="..." \
   -e GOOGLE_WORKSPACE_CLIENT_SECRET="..." \
   -e PROXY_ENCRYPTION_KEY="..." \
-  -e ALLOWED_EMAIL_DOMAIN="YOUR_COMPANY_DOMAIN.com" \
+  -e ALLOWED_EMAIL_DOMAINS="YOUR_COMPANY_DOMAIN.com,gmail.com" \
   -e ADMIN_EMAILS="admin@YOUR_COMPANY_DOMAIN.com" \
   -e MAX_REQUEST_BODY_BYTES="30000000" \
   ai-workspace-proxy

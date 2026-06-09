@@ -21,7 +21,7 @@ Overview
 --------
 AI Workspace Proxy is a single-binary Go HTTP service that:
 - lets users sign in to the proxy with Google
-- only admits users whose Google email belongs to the configured allowed domain
+- only admits users whose Google email belongs to one of the configured allowed domains
 - lets each user separately connect their AI Agent, through the proxy, to Google Workspace account via OAuth
 - stores Google Workspace tokens server-side only
 - issues a separate proxy API token to each user
@@ -94,7 +94,7 @@ The exact allowlist is defined by `policy.json`, not by this README. If `policy.
 Important login and admin note
 ------------------------------
 - Proxy login with Google is separate from the later Google Workspace OAuth step.
-- Users may log in only if their Google email is verified and matches `ALLOWED_EMAIL_DOMAIN`.
+- Users may log in only if their Google email is verified and matches one of `ALLOWED_EMAIL_DOMAINS`.
 - Admin access is driven only by `ADMIN_EMAILS`.
 - At least one admin email must be configured at startup.
 - During Google Workspace connect, the selected account must match the signed-in proxy user email.
@@ -151,7 +151,7 @@ Required:
 - `GOOGLE_WORKSPACE_CLIENT_ID`
 - `GOOGLE_WORKSPACE_CLIENT_SECRET`
 - `PROXY_ENCRYPTION_KEY`        32 raw bytes, or 64 hex chars, or base64 for 32 bytes
-- `ALLOWED_EMAIL_DOMAIN`        Example: `company.com`
+- `ALLOWED_EMAIL_DOMAINS`       Comma-separated domains. Example: `company.com,gmail.com`
 - `ADMIN_EMAILS`                comma-separated admin emails; at least one required
 
 Other optional:
@@ -203,5 +203,5 @@ Build and run
 
 Example values
 --------------
-- `ALLOWED_EMAIL_DOMAIN=company.com`
+- `ALLOWED_EMAIL_DOMAINS=company.com,gmail.com`
 - `ADMIN_EMAILS=admin@company.com`
