@@ -6,7 +6,7 @@ BIN_DIR:=$(ROOT_DIR)/bin
 DB_DIR:=$(ROOT_DIR)/db
 LOG_DIR:=$(ROOT_DIR)/logs
 
-.PHONY: all build clean run fmt
+.PHONY: all build clean run fmt docker
 
 all: build
 
@@ -23,6 +23,9 @@ run: build
 
 fmt:
 	gofmt -w $(SRC_DIR)/*.go
+
+docker:
+	docker build -t $(BINARY) .
 
 clean:
 	rm -f $(BIN_DIR)/$(BINARY)

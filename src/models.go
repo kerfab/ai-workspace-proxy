@@ -54,3 +54,17 @@ type AllowedDriveFolder struct {
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
+
+type DriveFolderTreeEntry struct {
+	UserID         string
+	RootRefID      string
+	FolderID       string
+	ParentFolderID string
+	FolderName     string
+	Path           string
+	PathKey        string
+	Depth          int
+	ResourceKey    string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}

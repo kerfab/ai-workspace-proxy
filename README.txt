@@ -168,12 +168,26 @@ Other optional:
 
 Allowed AI Drive folders
 ------------------------
-Users can configure up to 5 allowed Google Drive folders from the dashboard. Each folder has:
+Users can configure allowed Google Drive folders from the dashboard. Each folder has:
 - a unique Reference Name
 - an extracted internal folder ID
 - allowed file types (Docs, Sheets, Slides, generic Drive files)
 
-The proxy resolves that Reference Name to a stored folder configuration and enforces folder-level restrictions server-side.
+The proxy resolves that Reference Name to a stored folder configuration and enforces folder-level restrictions server-side. Registered folders include their cached subfolders.
+
+When a folder is added or updated, the proxy recursively caches the subfolder tree in SQLite. Users can refresh that cached tree from the dashboard if folders are added, moved, or renamed in Google Drive.
+
+Agents keep using `driveRef` for the registered root folder. For subfolders, agents may add:
+- `drivePath=Reports/2026` for a relative subfolder path under the selected `driveRef`
+- `driveFolderId=<folder_id>` when a path is ambiguous
+
+Agents can inspect the cached folder tree through:
+- `GET /api/drive-folders/tree`
+- `GET /api/drive-folders/tree?driveRef=<Reference Name>`
+
+Agents can refresh cached folder trees on behalf of the user through:
+- `POST /api/drive-folders/tree/refresh`
+- `POST /api/drive-folders/tree/refresh?driveRef=<Reference Name>`
 
 Known limitations and deployment recommendations
 ------------------------------------------------
@@ -192,6 +206,7 @@ Operational notes
 - Denied requests are logged to a rotating file set capped at 5 files total.
 - Gmail relay requests only accept `/users/me/...` or `/users/<connected_account_email>/...` and normalize outbound Gmail requests to `/users/me/`.
 - Calendar, Drive, Docs, Sheets, and Slides relays are all limited by `policy.json`.
+- Drive folder access is enforced against registered folder trees cached in SQLite.
 
 Build and run
 -------------
@@ -200,6 +215,14 @@ Build and run
 3. `source` that env file
 4. `make build`
 5. `make run`
+
+Docker build
+------------
+Build the Docker image from the project root:
+
+`make docker`
+
+This builds the image as `ai-workspace-proxy`.
 
 Example values
 --------------

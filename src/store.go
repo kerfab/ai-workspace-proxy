@@ -81,6 +81,22 @@ func (s *Store) Init() error {
 			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
 			UNIQUE(user_id, reference_key)
 		);`,
+		`CREATE TABLE IF NOT EXISTS drive_folder_tree_cache (
+			user_id TEXT NOT NULL,
+			root_ref_id TEXT NOT NULL,
+			folder_id TEXT NOT NULL,
+			parent_folder_id TEXT NOT NULL DEFAULT '',
+			folder_name TEXT NOT NULL,
+			path TEXT NOT NULL,
+			path_key TEXT NOT NULL,
+			depth INTEGER NOT NULL,
+			resource_key TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY (user_id, root_ref_id, folder_id),
+			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+			FOREIGN KEY(root_ref_id) REFERENCES drive_folder_refs(id) ON DELETE CASCADE
+		);`,
 		`CREATE TABLE IF NOT EXISTS user_daily_stats (
 			user_id TEXT NOT NULL,
 			day TEXT NOT NULL,
@@ -92,6 +108,9 @@ func (s *Store) Init() error {
 		`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);`,
 		`CREATE INDEX IF NOT EXISTS idx_drive_folder_refs_user_id ON drive_folder_refs(user_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_drive_folder_tree_root ON drive_folder_tree_cache(user_id, root_ref_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_drive_folder_tree_path ON drive_folder_tree_cache(user_id, root_ref_id, path_key);`,
+		`CREATE INDEX IF NOT EXISTS idx_drive_folder_tree_folder ON drive_folder_tree_cache(user_id, folder_id);`,
 	}
 	for _, stmt := range stmts {
 		if err := s.db.Exec(stmt); err != nil {
@@ -326,14 +345,6 @@ func (s *Store) ListDriveFolderRefs(userID string) ([]AllowedDriveFolder, error)
 	return out, nil
 }
 
-func (s *Store) CountDriveFolderRefs(userID string) (int, error) {
-	row, err := s.db.QueryOne(`SELECT COUNT(*) AS cnt FROM drive_folder_refs WHERE user_id = ?;`, userID)
-	if err != nil || row == nil {
-		return 0, err
-	}
-	return atoiSafe(row["cnt"]), nil
-}
-
 func (s *Store) FindDriveFolderRefByID(userID, id string) (*AllowedDriveFolder, error) {
 	row, err := s.db.QueryOne(`SELECT * FROM drive_folder_refs WHERE user_id = ? AND id = ?;`, userID, id)
 	if err != nil {
@@ -371,7 +382,74 @@ func (s *Store) UpdateDriveFolderRef(f *AllowedDriveFolder) error {
 }
 
 func (s *Store) DeleteDriveFolderRef(userID, id string) error {
+	if err := s.DeleteDriveFolderTree(userID, id); err != nil {
+		return err
+	}
 	return s.db.Exec(`DELETE FROM drive_folder_refs WHERE user_id = ? AND id = ?;`, userID, id)
+}
+
+func (s *Store) ReplaceDriveFolderTree(userID, rootRefID string, entries []DriveFolderTreeEntry) error {
+	if err := s.db.Exec(`DELETE FROM drive_folder_tree_cache WHERE user_id = ? AND root_ref_id = ?;`, userID, rootRefID); err != nil {
+		return err
+	}
+	now := nowUTC()
+	for _, entry := range entries {
+		if entry.UserID == "" {
+			entry.UserID = userID
+		}
+		if entry.RootRefID == "" {
+			entry.RootRefID = rootRefID
+		}
+		if entry.PathKey == "" {
+			entry.PathKey = strings.ToLower(strings.TrimSpace(entry.Path))
+		}
+		if err := s.db.Exec(`INSERT INTO drive_folder_tree_cache (user_id, root_ref_id, folder_id, parent_folder_id, folder_name, path, path_key, depth, resource_key, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+			entry.UserID, entry.RootRefID, entry.FolderID, entry.ParentFolderID, entry.FolderName, entry.Path, entry.PathKey, entry.Depth, entry.ResourceKey, now, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) DeleteDriveFolderTree(userID, rootRefID string) error {
+	return s.db.Exec(`DELETE FROM drive_folder_tree_cache WHERE user_id = ? AND root_ref_id = ?;`, userID, rootRefID)
+}
+
+func (s *Store) ListDriveFolderTree(userID, rootRefID string) ([]DriveFolderTreeEntry, error) {
+	rows, err := s.db.Query(`SELECT * FROM drive_folder_tree_cache WHERE user_id = ? AND root_ref_id = ? ORDER BY depth ASC, path_key ASC, folder_name ASC;`, userID, rootRefID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DriveFolderTreeEntry, 0, len(rows))
+	for _, row := range rows {
+		if entry := driveFolderTreeEntryFromRow(row); entry != nil {
+			out = append(out, *entry)
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) FindDriveFolderTreeByPathKey(userID, rootRefID, pathKey string) ([]DriveFolderTreeEntry, error) {
+	rows, err := s.db.Query(`SELECT * FROM drive_folder_tree_cache WHERE user_id = ? AND root_ref_id = ? AND path_key = ? ORDER BY depth ASC, folder_name ASC;`, userID, rootRefID, pathKey)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DriveFolderTreeEntry, 0, len(rows))
+	for _, row := range rows {
+		if entry := driveFolderTreeEntryFromRow(row); entry != nil {
+			out = append(out, *entry)
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) FindDriveFolderTreeByFolderID(userID, rootRefID, folderID string) (*DriveFolderTreeEntry, error) {
+	row, err := s.db.QueryOne(`SELECT * FROM drive_folder_tree_cache WHERE user_id = ? AND root_ref_id = ? AND folder_id = ?;`, userID, rootRefID, folderID)
+	if err != nil {
+		return nil, err
+	}
+	return driveFolderTreeEntryFromRow(row), nil
 }
 
 func userFromRow(row map[string]string) *User {
@@ -438,6 +516,25 @@ func driveFolderFromRow(row map[string]string) *AllowedDriveFolder {
 		AllowDriveFiles: row["allow_drive_files"] == "1",
 		CreatedAt:       parseTime(row["created_at"]),
 		UpdatedAt:       parseTime(row["updated_at"]),
+	}
+}
+
+func driveFolderTreeEntryFromRow(row map[string]string) *DriveFolderTreeEntry {
+	if row == nil {
+		return nil
+	}
+	return &DriveFolderTreeEntry{
+		UserID:         row["user_id"],
+		RootRefID:      row["root_ref_id"],
+		FolderID:       row["folder_id"],
+		ParentFolderID: row["parent_folder_id"],
+		FolderName:     row["folder_name"],
+		Path:           row["path"],
+		PathKey:        row["path_key"],
+		Depth:          atoiSafe(row["depth"]),
+		ResourceKey:    row["resource_key"],
+		CreatedAt:      parseTime(row["created_at"]),
+		UpdatedAt:      parseTime(row["updated_at"]),
 	}
 }
 

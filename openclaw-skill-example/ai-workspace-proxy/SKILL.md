@@ -24,13 +24,15 @@ Expected JSON shape:
 
 ## Rules
 
-- Use only `python3 ./scripts/workspace_proxy_tool.py ...`
+- Use only `python3 ./scripts/workspace_proxy_tool.py ...`, the "./scripts/" folder is inside the folder where this SKILL.md is read from. 
 - Never call Google directly; always go through the proxy
 - Never send email
 - Prefer reading a message or thread before drafting a reply
 - Prefer reading a calendar list before asking about a specific calendar
 - Prefer searching Drive before reading a file if the user did not provide a file id
 - For Docs, Sheets, Slides, and Drive-file creation inside controlled folders, use `--ref "Reference Name"`
+- For subfolders, keep `--ref` as the registered root and add `--drive-path "Relative/Subfolder"`; use `drive list-folders --ref "Reference Name"` if the user asks what subfolders exist
+- If cached subfolder data appears stale or a requested subfolder is missing, run `drive refresh-folders --ref "Reference Name"` and retry
 - Do not ask the user for raw folder ids or folder links during normal usage; use the configured Reference Name instead
 - If the proxy returns a denied request, explain that the action is blocked by proxy policy or folder rules
 - For updates to Docs, Sheets, and Slides, preserve existing content unless the user asked to replace it
@@ -109,6 +111,18 @@ Search files across allowed folders or a specific folder reference:
 
 `python3 ./scripts/workspace_proxy_tool.py drive search --query "name contains 'QBR'" --ref 'Board Prep'`
 
+List cached folders under a reference:
+
+`python3 ./scripts/workspace_proxy_tool.py drive list-folders --ref 'Board Prep'`
+
+Refresh cached folders under a reference:
+
+`python3 ./scripts/workspace_proxy_tool.py drive refresh-folders --ref 'Board Prep'`
+
+Search inside a subfolder:
+
+`python3 ./scripts/workspace_proxy_tool.py drive search --query "name contains 'QBR'" --ref 'Board Prep' --drive-path 'Reports/2026'`
+
 Read file metadata:
 
 `python3 ./scripts/workspace_proxy_tool.py drive get-file --file-id FILE_ID`
@@ -125,6 +139,10 @@ Create a Drive file record in an allowed folder:
 
 `python3 ./scripts/workspace_proxy_tool.py drive create-file --ref 'Board Prep' --name 'Notes' --mime-type text/plain`
 
+Create a Drive file record in a subfolder:
+
+`python3 ./scripts/workspace_proxy_tool.py drive create-file --ref 'Board Prep' --drive-path 'Reports/2026' --name 'Notes' --mime-type text/plain`
+
 Update Drive file metadata:
 
 `python3 ./scripts/workspace_proxy_tool.py drive update-file --file-id FILE_ID --name 'Updated Name'`
@@ -134,6 +152,10 @@ Update Drive file metadata:
 Create a Doc in an allowed folder:
 
 `python3 ./scripts/workspace_proxy_tool.py docs create --ref 'Board Prep' --title 'March Notes'`
+
+Create a Doc in a subfolder:
+
+`python3 ./scripts/workspace_proxy_tool.py docs create --ref 'Board Prep' --drive-path 'Reports/2026' --title 'March Notes'`
 
 Read a Doc:
 
@@ -148,6 +170,10 @@ Apply Docs batch updates from JSON:
 Create a Sheet in an allowed folder:
 
 `python3 ./scripts/workspace_proxy_tool.py sheets create --ref 'Finance' --title 'Forecast'`
+
+Create a Sheet in a subfolder:
+
+`python3 ./scripts/workspace_proxy_tool.py sheets create --ref 'Finance' --drive-path 'Forecasts/2026' --title 'Forecast'`
 
 Read a spreadsheet:
 
@@ -167,6 +193,10 @@ Create a presentation in an allowed folder:
 
 `python3 ./scripts/workspace_proxy_tool.py slides create --ref 'Sales Decks' --title 'Quarterly Review'`
 
+Create a presentation in a subfolder:
+
+`python3 ./scripts/workspace_proxy_tool.py slides create --ref 'Sales Decks' --drive-path 'Quarterly/2026' --title 'Quarterly Review'`
+
 Read a presentation:
 
 `python3 ./scripts/workspace_proxy_tool.py slides get --presentation-id PRESENTATION_ID`
@@ -180,7 +210,11 @@ Apply Slides batch updates from JSON:
 The proxy dashboard stores allowed Drive folders by Reference Name.
 
 - Use `--ref "Reference Name"` for new Drive, Docs, Sheets, and Slides content that should be created inside an allowed folder.
-- For Drive search, `--ref` narrows the search to one configured folder.
+- Registered folders include cached subfolders.
+- Use `drive refresh-folders --ref "Reference Name"` when subfolders were changed in Google Drive or a subfolder cannot be found.
+- For Drive search, `--ref` narrows the search to one configured folder tree.
+- Use `--drive-path "Reports/2026"` to target or search a subfolder under the selected reference.
+- If the proxy reports an ambiguous `--drive-path`, call `drive list-folders --ref "Reference Name"` and retry with `--drive-folder-id FOLDER_ID`.
 - Do not ask the user for folder ids or folder links unless they are configuring the proxy itself.
 
 ## JSON payload files
@@ -198,5 +232,5 @@ Examples:
 
 - Gmail draft operations do not send mail.
 - Gmail mark-read and archive are label modifications through the proxy.
-- Drive, Docs, Sheets, and Slides writes are allowed only in folders configured on the proxy dashboard.
+- Drive, Docs, Sheets, and Slides writes are allowed only in folders configured on the proxy dashboard, including their cached subfolders.
 - If a create or write operation fails, first check that the chosen Reference Name exists and that the folder allows that file type.

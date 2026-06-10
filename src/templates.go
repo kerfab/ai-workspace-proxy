@@ -8,7 +8,7 @@ var (
 <style>
 body{font-family:Arial,sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;}
 .card{border:1px solid #ddd;border-radius:8px;padding:1rem 1.25rem;margin-bottom:1rem;}
-.btn{display:inline-block;background:#0b57d0;color:#fff;padding:.6rem .9rem;border-radius:6px;text-decoration:none;border:none;cursor:pointer;}
+.btn{display:inline-block;background:#0b57d0;color:#fff;padding:.6rem .9rem;border-radius:6px;text-decoration:none;border:none;cursor:pointer;font:inherit;font-size:.875rem;line-height:1.2;}
 small,.small{color:#666;}
 code{background:#f4f4f4;padding:.15rem .35rem;border-radius:4px;}
 </style></head><body>
@@ -25,7 +25,7 @@ code{background:#f4f4f4;padding:.15rem .35rem;border-radius:4px;}
 <style>
 body{font-family:Arial,sans-serif;max-width:1200px;margin:2rem auto;padding:0 1rem;}
 .card{border:1px solid #ddd;border-radius:8px;padding:1rem 1.25rem;margin-bottom:1rem;}
-.btn{display:inline-block;background:#0b57d0;color:#fff;padding:.6rem .9rem;border-radius:6px;text-decoration:none;border:none;cursor:pointer;}
+.btn{display:inline-block;background:#0b57d0;color:#fff;padding:.6rem .9rem;border-radius:6px;text-decoration:none;border:none;cursor:pointer;font:inherit;font-size:.875rem;line-height:1.2;}
 .btn.secondary{background:#444;}
 .btn.warn{background:#b73239;}
 code{background:#f4f4f4;padding:.15rem .35rem;border-radius:4px;}
@@ -40,13 +40,20 @@ th,td{border:1px solid #ddd;padding:.65rem;text-align:left;vertical-align:top;wo
 .folder-form .checks{display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;}
 .folder-edit-grid{display:grid;grid-template-columns:minmax(160px,190px) minmax(260px,1fr);gap:.5rem 1rem;align-items:center;}
 .folder-edit-grid .checks{grid-column:1 / span 2;display:flex;gap:.75rem;flex-wrap:wrap;align-items:center;}
-.folder-edit-grid .actions{grid-column:1 / span 2;display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;}
+.folder-action-row{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;margin-top:.5rem;}
+.discovery-overlay{position:fixed;inset:0;background:rgba(255,255,255,.86);display:none;align-items:center;justify-content:center;z-index:1000;padding:1rem;}
+.discovery-overlay.active{display:flex;}
+.discovery-box{max-width:420px;background:#fff;border:1px solid #ddd;border-radius:8px;padding:1.25rem 1.5rem;box-shadow:0 8px 28px rgba(0,0,0,.14);}
+.discovery-box h2{margin:.1rem 0 .5rem 0;}
+.discovery-box p{margin:.4rem 0;color:#444;}
+.spinner{width:28px;height:28px;border:3px solid #d7d7d7;border-top-color:#0b57d0;border-radius:50%;animation:spin .9s linear infinite;margin-bottom:.75rem;}
+@keyframes spin{to{transform:rotate(360deg);}}
 input[type="text"]{box-sizing:border-box;max-width:100%;width:100%;padding:.35rem .45rem;}
 label.checkbox{display:inline-flex;gap:.35rem;align-items:center;white-space:nowrap;}
 @media (max-width: 900px){
   .folder-form{grid-template-columns:1fr;}
   .folder-edit-grid{grid-template-columns:1fr;}
-  .folder-edit-grid .checks,.folder-edit-grid .actions{grid-column:auto;}
+  .folder-edit-grid .checks{grid-column:auto;}
   table,thead,tbody,tr,td,th{display:block;}
   thead{display:none;}
   tr{border:1px solid #ddd;margin-bottom:1rem;padding:.5rem;}
@@ -79,14 +86,35 @@ function syncCheckboxFallback(prefix){
   }
   return true;
 }
+function showDriveDiscoveryOverlay(){
+  const overlay = document.getElementById('driveDiscoveryOverlay');
+  if (overlay) {
+    overlay.classList.add('active');
+  }
+  return true;
+}
+function prepareDriveFolderSubmit(prefix){
+  if (!syncCheckboxFallback(prefix)) {
+    return false;
+  }
+  return showDriveDiscoveryOverlay();
+}
 </script>
 </head><body>
+<div id="driveDiscoveryOverlay" class="discovery-overlay" aria-live="polite" aria-busy="true">
+  <div class="discovery-box">
+    <div class="spinner"></div>
+    <h2>Discovering Drive folders</h2>
+    <p>The proxy is discovering the folder tree and caching subfolders for agent access.</p>
+    <p>This can take a few minutes for large Google Drive folders. The dashboard will return automatically when the operation finishes.</p>
+  </div>
+</div>
 <h1>{{.AppName}}</h1>
 
 <div class="card">
   <p><strong>User:</strong> {{.User.Email}}</p>
   <p><strong>Name:</strong> {{.User.Name}}</p>
-  <form method="post" action="/logout"><button class="btn secondary" type="submit">Logout</button></form>
+  <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="btn secondary" type="submit">Logout</button></form>
 </div>
 
 <div class="card">
@@ -94,7 +122,9 @@ function syncCheckboxFallback(prefix){
   <p><code id="proxyToken" class="hidden">{{.TokenHint}}</code></p>
   <div class="inline-actions">
     <button class="btn" type="button" onclick="toggleToken()">Show / hide token</button>
+    <a class="btn" href="/api/token/download-config">Download JSON</a>
     <form method="post" action="/api/token/rotate" onsubmit="return confirmRotate();">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <button class="btn warn" type="submit">Rotate key</button>
     </form>
   </div>
@@ -110,7 +140,7 @@ function syncCheckboxFallback(prefix){
     <p><strong>Connection status:</strong> {{.Workspace.ConnectionStatus}}</p>
     <p><strong>Proxy API token:</strong> {{.Workspace.ProxyTokenStatus}}</p>
     <p><small>Workspace access is refreshed automatically and remains active until access is revoked or disconnected.</small></p>
-    <form method="post" action="/auth/workspace/disconnect"><button class="btn warn" type="submit">Disconnect Google Workspace</button></form>
+    <form method="post" action="/auth/workspace/disconnect"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="btn warn" type="submit">Disconnect Google Workspace</button></form>
   {{else}}
     <p>No Google Workspace account connected yet.</p>
     <a class="btn" href="/auth/workspace/connect">Connect Google Workspace</a>
@@ -119,9 +149,10 @@ function syncCheckboxFallback(prefix){
 
 <div class="card">
   <h2>Allowed AI Drive folders</h2>
-  <p><small>Use a unique Reference Name. Agents can refer to folders by that name. Up to 5 folders per user.</small></p>
+  <p><small>Use a unique Reference Name. Agents can refer to folders by that name. Registered folders include cached subfolders.</small></p>
   {{if .FolderError}}<p class="error">{{.FolderError}}</p>{{end}}
-  <form method="post" action="/workspace/drive-folders/add" class="folder-form" onsubmit="return syncCheckboxFallback('new');">
+  <form method="post" action="/workspace/drive-folders/add" class="folder-form" onsubmit="return prepareDriveFolderSubmit('new');">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
     <input type="text" name="reference_name" placeholder="Reference Name" required>
     <input type="text" name="folder_link" placeholder="Google Drive folder link" required>
     <div class="checks">
@@ -158,7 +189,8 @@ function syncCheckboxFallback(prefix){
           {{if .AllowDriveFiles}}Drive {{end}}
         </td>
         <td>
-          <form method="post" action="/workspace/drive-folders/{{.ID}}/update" class="folder-edit-grid" onsubmit="return syncCheckboxFallback('f_{{.ID}}');">
+          <form id="update_{{.ID}}" method="post" action="/workspace/drive-folders/{{.ID}}/update" class="folder-edit-grid" onsubmit="return prepareDriveFolderSubmit('f_{{.ID}}');">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
             <input type="text" name="reference_name" value="{{.ReferenceName}}" required>
             <input type="text" name="folder_link" value="{{.FolderURL}}" required>
             <div class="checks">
@@ -167,13 +199,18 @@ function syncCheckboxFallback(prefix){
               <label class="checkbox"><input id="f_{{.ID}}_slides" type="checkbox" name="allow_slides" {{if .AllowSlides}}checked{{end}}> Slides</label>
               <label class="checkbox"><input id="f_{{.ID}}_drive" type="checkbox" name="allow_drive_files" {{if .AllowDriveFiles}}checked{{end}}> Drive</label>
             </div>
-            <div class="actions">
-              <button class="btn secondary" type="submit">Update</button>
           </form>
-              <form method="post" action="/workspace/drive-folders/{{.ID}}/delete" onsubmit="return confirm('Delete this allowed folder reference?');">
-                <button class="btn warn" type="submit">Delete</button>
-              </form>
-            </div>
+          <div class="folder-action-row">
+            <button class="btn secondary" type="submit" form="update_{{.ID}}">Update</button>
+            <form method="post" action="/workspace/drive-folders/{{.ID}}/refresh" onsubmit="return showDriveDiscoveryOverlay();">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <button class="btn secondary" type="submit">Refresh tree</button>
+            </form>
+            <form method="post" action="/workspace/drive-folders/{{.ID}}/delete" onsubmit="return confirm('Delete this allowed folder reference?');">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <button class="btn warn" type="submit">Delete</button>
+            </form>
+          </div>
         </td>
       </tr>
       {{end}}
@@ -256,11 +293,11 @@ th,td{border:1px solid #ddd;padding:.5rem;text-align:left;}
 </div>
 <div class="card">
   {{if .User.IsSuspended}}
-  <form method="post" action="/admin/users/{{.User.ID}}/unsuspend"><button class="btn" type="submit">Unsuspend user</button></form>
+  <form method="post" action="/admin/users/{{.User.ID}}/unsuspend"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="btn" type="submit">Unsuspend user</button></form>
   {{else}}
-  <form method="post" action="/admin/users/{{.User.ID}}/suspend"><button class="btn warn" type="submit">Suspend user</button></form>
+  <form method="post" action="/admin/users/{{.User.ID}}/suspend"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="btn warn" type="submit">Suspend user</button></form>
   {{end}}
-  <form method="post" action="/admin/users/{{.User.ID}}/delete" onsubmit="return confirm('Delete user and stored credentials?');"><button class="btn warn" type="submit">Delete user</button></form>
+  <form method="post" action="/admin/users/{{.User.ID}}/delete" onsubmit="return confirm('Delete user and stored credentials?');"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="btn warn" type="submit">Delete user</button></form>
 </div>
 <div class="card">
   <h2>Last 30 days</h2>

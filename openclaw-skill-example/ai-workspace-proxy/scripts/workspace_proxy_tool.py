@@ -290,12 +290,35 @@ def get_event(token: str, calendar_id: str, event_id: str):
     return request_json("GET", f"/calendar.googleapis.com/calendar/v3/calendars/{calendar_id}/events/{event_id}", token)
 
 
-def drive_search(token: str, query_str: str = "", ref: str = "", page_size: int = 20):
+def add_drive_location_query(query: Dict[str, Any], ref: str = "", drive_path: str = "", drive_folder_id: str = ""):
+    if ref:
+        query["driveRef"] = ref
+    if drive_path:
+        query["drivePath"] = drive_path
+    if drive_folder_id:
+        query["driveFolderId"] = drive_folder_id
+    return query
+
+
+def drive_folder_tree(token: str, ref: str = ""):
+    query: Dict[str, Any] = {}
+    if ref:
+        query["driveRef"] = ref
+    return request_json("GET", "/api/drive-folders/tree", token, query=query)
+
+
+def drive_refresh_folders(token: str, ref: str = ""):
+    query: Dict[str, Any] = {}
+    if ref:
+        query["driveRef"] = ref
+    return request_json("POST", "/api/drive-folders/tree/refresh", token, query=query)
+
+
+def drive_search(token: str, query_str: str = "", ref: str = "", drive_path: str = "", drive_folder_id: str = "", page_size: int = 20):
     query: Dict[str, Any] = {"pageSize": str(page_size)}
     if query_str:
         query["q"] = query_str
-    if ref:
-        query["driveRef"] = ref
+    add_drive_location_query(query, ref, drive_path, drive_folder_id)
     return request_json("GET", "/drive.googleapis.com/drive/v3/files", token, query=query)
 
 
@@ -320,8 +343,8 @@ def drive_export(token: str, file_id: str, mime_type: str, save_to: str):
     return {"fileId": file_id, "savedTo": str(out), "size": len(data), "mimeType": mime_type}
 
 
-def drive_create_file(token: str, ref: str, name: str, mime_type: str = "", body_file: str = ""):
-    query = {"driveRef": ref}
+def drive_create_file(token: str, ref: str, name: str, mime_type: str = "", body_file: str = "", drive_path: str = "", drive_folder_id: str = ""):
+    query = add_drive_location_query({}, ref, drive_path, drive_folder_id)
     body: Dict[str, Any] = {"name": name}
     if mime_type:
         body["mimeType"] = mime_type
@@ -343,8 +366,9 @@ def drive_update_file(token: str, file_id: str, name: str = "", body_file: str =
     return request_json("PATCH", f"/drive.googleapis.com/drive/v3/files/{file_id}", token, body=body)
 
 
-def docs_create(token: str, ref: str, title: str):
-    return request_json("POST", "/docs.googleapis.com/v1/documents", token, body={"title": title}, query={"driveRef": ref})
+def docs_create(token: str, ref: str, title: str, drive_path: str = "", drive_folder_id: str = ""):
+    query = add_drive_location_query({}, ref, drive_path, drive_folder_id)
+    return request_json("POST", "/docs.googleapis.com/v1/documents", token, body={"title": title}, query=query)
 
 
 def docs_get(token: str, document_id: str):
@@ -356,8 +380,9 @@ def docs_update(token: str, document_id: str, requests_file: str):
     return request_json("POST", f"/docs.googleapis.com/v1/documents/{document_id}:batchUpdate", token, body=body)
 
 
-def sheets_create(token: str, ref: str, title: str):
-    return request_json("POST", "/sheets.googleapis.com/v4/spreadsheets", token, body={"properties": {"title": title}}, query={"driveRef": ref})
+def sheets_create(token: str, ref: str, title: str, drive_path: str = "", drive_folder_id: str = ""):
+    query = add_drive_location_query({}, ref, drive_path, drive_folder_id)
+    return request_json("POST", "/sheets.googleapis.com/v4/spreadsheets", token, body={"properties": {"title": title}}, query=query)
 
 
 def sheets_get(token: str, spreadsheet_id: str):
@@ -377,8 +402,9 @@ def sheets_batch_update(token: str, spreadsheet_id: str, requests_file: str):
     return request_json("POST", f"/sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}:batchUpdate", token, body=body)
 
 
-def slides_create(token: str, ref: str, title: str):
-    return request_json("POST", "/slides.googleapis.com/v1/presentations", token, body={"title": title}, query={"driveRef": ref})
+def slides_create(token: str, ref: str, title: str, drive_path: str = "", drive_folder_id: str = ""):
+    query = add_drive_location_query({}, ref, drive_path, drive_folder_id)
+    return request_json("POST", "/slides.googleapis.com/v1/presentations", token, body={"title": title}, query=query)
 
 
 def slides_get(token: str, presentation_id: str):
@@ -469,7 +495,13 @@ def build_parser():
     p = dsub.add_parser("search")
     p.add_argument("--query", default="")
     p.add_argument("--ref", default="")
+    p.add_argument("--drive-path", default="")
+    p.add_argument("--drive-folder-id", default="")
     p.add_argument("--page-size", type=int, default=20)
+    p = dsub.add_parser("list-folders")
+    p.add_argument("--ref", default="")
+    p = dsub.add_parser("refresh-folders")
+    p.add_argument("--ref", default="")
     p = dsub.add_parser("get-file")
     p.add_argument("--file-id", required=True)
     p.add_argument("--fields", default="")
@@ -485,6 +517,8 @@ def build_parser():
     p.add_argument("--name", required=True)
     p.add_argument("--mime-type", default="")
     p.add_argument("--body-file", default="")
+    p.add_argument("--drive-path", default="")
+    p.add_argument("--drive-folder-id", default="")
     p = dsub.add_parser("update-file")
     p.add_argument("--file-id", required=True)
     p.add_argument("--name", default="")
@@ -496,6 +530,8 @@ def build_parser():
     p = dsub2.add_parser("create")
     p.add_argument("--ref", required=True)
     p.add_argument("--title", required=True)
+    p.add_argument("--drive-path", default="")
+    p.add_argument("--drive-folder-id", default="")
     p = dsub2.add_parser("get")
     p.add_argument("--document-id", required=True)
     p = dsub2.add_parser("update")
@@ -508,6 +544,8 @@ def build_parser():
     p = ssub.add_parser("create")
     p.add_argument("--ref", required=True)
     p.add_argument("--title", required=True)
+    p.add_argument("--drive-path", default="")
+    p.add_argument("--drive-folder-id", default="")
     p = ssub.add_parser("get")
     p.add_argument("--spreadsheet-id", required=True)
     p = ssub.add_parser("values-update")
@@ -525,6 +563,8 @@ def build_parser():
     p = slsub.add_parser("create")
     p.add_argument("--ref", required=True)
     p.add_argument("--title", required=True)
+    p.add_argument("--drive-path", default="")
+    p.add_argument("--drive-folder-id", default="")
     p = slsub.add_parser("get")
     p.add_argument("--presentation-id", required=True)
     p = slsub.add_parser("update")
@@ -599,7 +639,11 @@ def main():
 
     elif args.product == "drive":
         if args.cmd == "search":
-            out = drive_search(token, args.query, args.ref, args.page_size)
+            out = drive_search(token, args.query, args.ref, args.drive_path, args.drive_folder_id, args.page_size)
+        elif args.cmd == "list-folders":
+            out = drive_folder_tree(token, args.ref)
+        elif args.cmd == "refresh-folders":
+            out = drive_refresh_folders(token, args.ref)
         elif args.cmd == "get-file":
             out = drive_get_file(token, args.file_id, args.fields)
         elif args.cmd == "download":
@@ -607,7 +651,7 @@ def main():
         elif args.cmd == "export":
             out = drive_export(token, args.file_id, args.mime_type, args.save_to)
         elif args.cmd == "create-file":
-            out = drive_create_file(token, args.ref, args.name, args.mime_type, args.body_file)
+            out = drive_create_file(token, args.ref, args.name, args.mime_type, args.body_file, args.drive_path, args.drive_folder_id)
         elif args.cmd == "update-file":
             out = drive_update_file(token, args.file_id, args.name, args.body_file)
         else:
@@ -615,7 +659,7 @@ def main():
 
     elif args.product == "docs":
         if args.cmd == "create":
-            out = docs_create(token, args.ref, args.title)
+            out = docs_create(token, args.ref, args.title, args.drive_path, args.drive_folder_id)
         elif args.cmd == "get":
             out = docs_get(token, args.document_id)
         elif args.cmd == "update":
@@ -625,7 +669,7 @@ def main():
 
     elif args.product == "sheets":
         if args.cmd == "create":
-            out = sheets_create(token, args.ref, args.title)
+            out = sheets_create(token, args.ref, args.title, args.drive_path, args.drive_folder_id)
         elif args.cmd == "get":
             out = sheets_get(token, args.spreadsheet_id)
         elif args.cmd == "values-update":
@@ -637,7 +681,7 @@ def main():
 
     elif args.product == "slides":
         if args.cmd == "create":
-            out = slides_create(token, args.ref, args.title)
+            out = slides_create(token, args.ref, args.title, args.drive_path, args.drive_folder_id)
         elif args.cmd == "get":
             out = slides_get(token, args.presentation_id)
         elif args.cmd == "update":

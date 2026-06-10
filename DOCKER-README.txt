@@ -37,7 +37,11 @@ See file config.env.example for more fine-tuning variables.
 
 Build
 -----
-docker build -t ai-workspace-proxy .
+From the project root, run:
+
+make docker
+
+This builds the Docker image as `ai-workspace-proxy`.
 
 Run
 ---

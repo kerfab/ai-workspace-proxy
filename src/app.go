@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -79,7 +82,10 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("/auth/gmail/disconnect", a.handleWorkspaceDisconnect)
 	mux.HandleFunc("/workspace/drive-folders/add", a.handleAddDriveFolder)
 	mux.HandleFunc("/workspace/drive-folders/", a.handleDriveFolderRoutes)
+	mux.HandleFunc("/api/drive-folders/tree", a.handleDriveFolderTreeAPI)
+	mux.HandleFunc("/api/drive-folders/tree/refresh", a.handleRefreshDriveFolderTreeAPI)
 	mux.HandleFunc("/api/token/reveal", a.handleRevealToken)
+	mux.HandleFunc("/api/token/download-config", a.handleDownloadProxyConfig)
 	mux.HandleFunc("/api/token/rotate", a.handleRotateToken)
 	mux.HandleFunc("/admin/users", a.handleAdminUsers)
 	mux.HandleFunc("/admin/users/", a.handleAdminUserRoutes)
@@ -139,6 +145,7 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		"AppName":            a.cfg.AppName,
 		"BaseURL":            a.cfg.BaseURL,
 		"User":               user,
+		"CSRFToken":          a.csrfTokenFromRequest(r),
 		"TokenHint":          hint,
 		"WorkspaceConnected": connected,
 		"Workspace":          workspaceView,
@@ -240,6 +247,9 @@ func (a *App) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	if !a.requireSessionCSRF(w, r) {
 		return
 	}
 	if cookie, err := r.Cookie(a.cfg.SessionCookieName); err == nil {
@@ -365,6 +375,9 @@ func (a *App) handleWorkspaceDisconnect(w http.ResponseWriter, r *http.Request) 
 	if user == nil {
 		return
 	}
+	if !a.requireSessionCSRF(w, r) {
+		return
+	}
 	if err := a.store.DeleteGmailConnection(user.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
 		return
@@ -381,13 +394,7 @@ func (a *App) handleAddDriveFolder(w http.ResponseWriter, r *http.Request) {
 	if user == nil {
 		return
 	}
-	count, err := a.store.CountDriveFolderRefs(user.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
-		return
-	}
-	if count >= 5 {
-		http.Redirect(w, r, "/?folder_error="+url.QueryEscape("You can configure up to 5 allowed Drive folders."), http.StatusFound)
+	if !a.requireSessionCSRF(w, r) {
 		return
 	}
 	folder, err := a.buildDriveFolderRefFromRequest(user.ID, "", r)
@@ -403,6 +410,17 @@ func (a *App) handleAddDriveFolder(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
 		return
 	}
+	accessToken, err := a.getUserWorkspaceAccessToken(user.ID)
+	if err != nil {
+		_ = a.store.DeleteDriveFolderRef(user.ID, folder.ID)
+		http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		return
+	}
+	if err := a.refreshDriveFolderTree(user.ID, accessToken, folder); err != nil {
+		_ = a.store.DeleteDriveFolderRef(user.ID, folder.ID)
+		http.Redirect(w, r, "/?folder_error="+url.QueryEscape("Unable to cache subfolder tree: "+err.Error()), http.StatusFound)
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -413,6 +431,9 @@ func (a *App) handleDriveFolderRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	user := a.requireSessionUser(w, r)
 	if user == nil {
+		return
+	}
+	if !a.requireSessionCSRF(w, r) {
 		return
 	}
 	trimmed := strings.TrimPrefix(r.URL.Path, "/workspace/drive-folders/")
@@ -441,6 +462,25 @@ func (a *App) handleDriveFolderRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := a.store.UpdateDriveFolderRef(folder); err != nil {
 			http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+			return
+		}
+		accessToken, err := a.getUserWorkspaceAccessToken(user.ID)
+		if err != nil {
+			http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+			return
+		}
+		if err := a.refreshDriveFolderTree(user.ID, accessToken, folder); err != nil {
+			http.Redirect(w, r, "/?folder_error="+url.QueryEscape("Unable to refresh subfolder tree: "+err.Error()), http.StatusFound)
+			return
+		}
+	case "refresh":
+		accessToken, err := a.getUserWorkspaceAccessToken(user.ID)
+		if err != nil {
+			http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+			return
+		}
+		if err := a.refreshDriveFolderTree(user.ID, accessToken, current); err != nil {
+			http.Redirect(w, r, "/?folder_error="+url.QueryEscape("Unable to refresh subfolder tree: "+err.Error()), http.StatusFound)
 			return
 		}
 	case "delete":
@@ -496,6 +536,14 @@ func (a *App) buildDriveFolderRefFromRequest(userID, existingID string, r *http.
 	return &AllowedDriveFolder{ID: existingID, UserID: userID, ReferenceName: referenceName, ReferenceKey: normalizeReferenceKey(referenceName), FolderURL: folderLink, FolderID: folderID, FolderName: meta.Name, ResourceKey: resourceKey, AllowDocs: allowDocs, AllowSheets: allowSheets, AllowSlides: allowSlides, AllowDriveFiles: allowDrive}, nil
 }
 
+func (a *App) getUserWorkspaceAccessToken(userID string) (string, error) {
+	conn, err := a.store.GetGmailConnection(userID)
+	if err != nil || conn == nil {
+		return "", fmt.Errorf("Connect Google Workspace before configuring allowed Drive folders")
+	}
+	return a.getValidWorkspaceAccessToken(conn)
+}
+
 func (a *App) handleRevealToken(w http.ResponseWriter, r *http.Request) {
 	user := a.requireSessionUser(w, r)
 	if user == nil {
@@ -512,6 +560,179 @@ func (a *App) handleRevealToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": raw})
+}
+
+func (a *App) handleDownloadProxyConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET required")
+		return
+	}
+	user := a.requireSessionUser(w, r)
+	if user == nil {
+		return
+	}
+	rec, err := a.store.GetProxyTokenRecord(user.ID)
+	if err != nil || rec == nil {
+		writeError(w, http.StatusNotFound, "token_error", "proxy token not found")
+		return
+	}
+	raw, err := a.crypto.Decrypt(rec["token_enc"])
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "token_error", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="ai-workspace-proxy.json"`)
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"proxy_url":   a.cfg.BaseURL,
+		"proxy_token": raw,
+	})
+}
+
+func (a *App) handleDriveFolderTreeAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET required")
+		return
+	}
+	user, err := a.currentUserFromProxyBearer(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "auth_error", err.Error())
+		return
+	}
+	if user == nil || user.IsSuspended {
+		writeError(w, http.StatusUnauthorized, "auth_error", "invalid or suspended user")
+		return
+	}
+	_ = a.store.TouchProxyTokenUsage(user.ID)
+	conn, err := a.store.GetGmailConnection(user.ID)
+	if err != nil || conn == nil {
+		writeError(w, http.StatusForbidden, "workspace_not_connected", "user has not connected Google Workspace")
+		return
+	}
+	accessToken, err := a.getValidWorkspaceAccessToken(conn)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "workspace_token_error", err.Error())
+		return
+	}
+
+	refName := r.URL.Query().Get("driveRef")
+	folders, selectedRef, err := a.resolveReferenceFolders(user.ID, refName)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "request_denied", err.Error())
+		return
+	}
+	if selectedRef != nil {
+		folders = []AllowedDriveFolder{*selectedRef}
+	}
+
+	payloadFolders := []map[string]any{}
+	for i := range folders {
+		if err := a.ensureDriveFolderTreeCache(user.ID, accessToken, &folders[i]); err != nil {
+			writeError(w, http.StatusBadGateway, "drive_tree_error", err.Error())
+			return
+		}
+		entries, err := a.store.ListDriveFolderTree(user.ID, folders[i].ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+			return
+		}
+		tree := []map[string]any{}
+		refreshedAt := ""
+		for _, entry := range entries {
+			if refreshedAt == "" || entry.UpdatedAt.After(parseTime(refreshedAt)) {
+				refreshedAt = entry.UpdatedAt.Format(time.RFC3339)
+			}
+			tree = append(tree, map[string]any{
+				"folderId":       entry.FolderID,
+				"parentFolderId": entry.ParentFolderID,
+				"name":           entry.FolderName,
+				"path":           entry.Path,
+				"depth":          entry.Depth,
+				"resourceKey":    entry.ResourceKey,
+			})
+		}
+		payloadFolders = append(payloadFolders, map[string]any{
+			"referenceName": folders[i].ReferenceName,
+			"referenceKey":  folders[i].ReferenceKey,
+			"rootFolderId":  folders[i].FolderID,
+			"rootName":      folders[i].FolderName,
+			"refreshedAt":   refreshedAt,
+			"folders":       tree,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"driveFolders": payloadFolders})
+}
+
+func (a *App) handleRefreshDriveFolderTreeAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	user, err := a.currentUserFromProxyBearer(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "auth_error", err.Error())
+		return
+	}
+	if user == nil || user.IsSuspended {
+		writeError(w, http.StatusUnauthorized, "auth_error", "invalid or suspended user")
+		return
+	}
+	_ = a.store.TouchProxyTokenUsage(user.ID)
+	conn, err := a.store.GetGmailConnection(user.ID)
+	if err != nil || conn == nil {
+		writeError(w, http.StatusForbidden, "workspace_not_connected", "user has not connected Google Workspace")
+		return
+	}
+	accessToken, err := a.getValidWorkspaceAccessToken(conn)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "workspace_token_error", err.Error())
+		return
+	}
+
+	refName := r.URL.Query().Get("driveRef")
+	folders, selectedRef, err := a.resolveReferenceFolders(user.ID, refName)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "request_denied", err.Error())
+		return
+	}
+	if selectedRef != nil {
+		folders = []AllowedDriveFolder{*selectedRef}
+	}
+
+	refreshed := []map[string]any{}
+	for i := range folders {
+		if err := a.refreshDriveFolderTree(user.ID, accessToken, &folders[i]); err != nil {
+			writeError(w, http.StatusBadGateway, "drive_tree_error", err.Error())
+			return
+		}
+		entries, err := a.store.ListDriveFolderTree(user.ID, folders[i].ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+			return
+		}
+		refreshedAt := ""
+		if len(entries) > 0 {
+			refreshedAt = entries[0].UpdatedAt.Format(time.RFC3339)
+		}
+		refreshed = append(refreshed, map[string]any{
+			"referenceName": folders[i].ReferenceName,
+			"referenceKey":  folders[i].ReferenceKey,
+			"rootFolderId":  folders[i].FolderID,
+			"rootName":      folders[i].FolderName,
+			"folderCount":   len(entries),
+			"refreshedAt":   refreshedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "driveFolders": refreshed})
+}
+
+func (a *App) currentUserFromProxyBearer(r *http.Request) (*User, error) {
+	proxyToken := parseBearerToken(r.Header.Get("Authorization"))
+	if proxyToken == "" {
+		return nil, nil
+	}
+	return a.store.FindUserByProxyToken(a.crypto, proxyToken)
 }
 
 func (a *App) rotateProxyToken(userID string) error {
@@ -536,6 +757,9 @@ func (a *App) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 	if user == nil {
 		return
 	}
+	if !a.requireSessionCSRF(w, r) {
+		return
+	}
 	if err := a.rotateProxyToken(user.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "token_error", err.Error())
 		return
@@ -556,6 +780,7 @@ func (a *App) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	_ = adminUsersTemplate.Execute(w, map[string]any{
 		"AppName":       a.cfg.AppName,
 		"Admin":         admin,
+		"CSRFToken":     a.csrfTokenFromRequest(r),
 		"Users":         users,
 		"PolicyPath":    a.cfg.PolicyPath,
 		"DeniedLogPath": a.cfg.DeniedLogPath,
@@ -588,15 +813,19 @@ func (a *App) handleAdminUserRoutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = adminUserTemplate.Execute(w, map[string]any{
-			"AppName": a.cfg.AppName,
-			"Admin":   admin,
-			"User":    target,
-			"Stats":   stats,
+			"AppName":   a.cfg.AppName,
+			"Admin":     admin,
+			"CSRFToken": a.csrfTokenFromRequest(r),
+			"User":      target,
+			"Stats":     stats,
 		})
 		return
 	}
 
 	if len(parts) == 2 && r.Method == http.MethodPost {
+		if !a.requireSessionCSRF(w, r) {
+			return
+		}
 		action := parts[1]
 		switch action {
 		case "suspend":
@@ -758,6 +987,30 @@ func (a *App) requireSessionUser(w http.ResponseWriter, r *http.Request) *User {
 	return user
 }
 
+func (a *App) csrfTokenFromRequest(r *http.Request) string {
+	cookie, err := r.Cookie(a.cfg.SessionCookieName)
+	if err != nil || cookie.Value == "" {
+		return ""
+	}
+	return a.csrfTokenFromSession(cookie.Value)
+}
+
+func (a *App) csrfTokenFromSession(sessionToken string) string {
+	mac := hmac.New(sha256.New, a.cfg.EncryptionKey)
+	_, _ = mac.Write([]byte("csrf:" + sessionToken))
+	return "csrf_" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func (a *App) requireSessionCSRF(w http.ResponseWriter, r *http.Request) bool {
+	expected := a.csrfTokenFromRequest(r)
+	provided := strings.TrimSpace(r.FormValue("csrf_token"))
+	if expected == "" || provided == "" || !subtleEqual(expected, provided) {
+		writeError(w, http.StatusForbidden, "csrf_denied", "invalid CSRF token")
+		return false
+	}
+	return true
+}
+
 func (a *App) requireAdminUser(w http.ResponseWriter, r *http.Request) *User {
 	user := a.requireSessionUser(w, r)
 	if user == nil {
@@ -894,11 +1147,10 @@ func (a *App) getValidWorkspaceAccessToken(conn *GmailConnection) (string, error
 }
 
 const (
-	mimeTypeFolder         = "application/vnd.google-apps.folder"
-	mimeTypeDoc            = "application/vnd.google-apps.document"
-	mimeTypeSheet          = "application/vnd.google-apps.spreadsheet"
-	mimeTypeSlide          = "application/vnd.google-apps.presentation"
-	maxDriveFoldersPerUser = 5
+	mimeTypeFolder = "application/vnd.google-apps.folder"
+	mimeTypeDoc    = "application/vnd.google-apps.document"
+	mimeTypeSheet  = "application/vnd.google-apps.spreadsheet"
+	mimeTypeSlide  = "application/vnd.google-apps.presentation"
 )
 
 type driveFileMetadata struct {
@@ -960,10 +1212,15 @@ func kindAllowedInFolder(f *AllowedDriveFolder, kind string) bool {
 	}
 }
 
-func buildFolderQueryClause(folders []AllowedDriveFolder) string {
-	parts := make([]string, 0, len(folders))
-	for _, f := range folders {
-		parts = append(parts, fmt.Sprintf("'%s' in parents", f.FolderID))
+func buildFolderQueryClause(folderIDs []string) string {
+	parts := make([]string, 0, len(folderIDs))
+	seen := map[string]bool{}
+	for _, folderID := range folderIDs {
+		if folderID == "" || seen[folderID] {
+			continue
+		}
+		seen[folderID] = true
+		parts = append(parts, fmt.Sprintf("'%s' in parents", folderID))
 	}
 	return strings.Join(parts, " or ")
 }
@@ -994,6 +1251,253 @@ func (a *App) fetchDriveFileMetadata(accessToken, fileID, resourceKey string) (*
 		return nil, err
 	}
 	return &out, nil
+}
+
+func (a *App) listDriveChildFolders(accessToken, parentID string) ([]driveFileMetadata, error) {
+	out := []driveFileMetadata{}
+	pageToken := ""
+	for {
+		q := url.Values{}
+		q.Set("q", fmt.Sprintf("'%s' in parents and mimeType = '%s' and trashed = false", parentID, mimeTypeFolder))
+		q.Set("fields", "nextPageToken,files(id,name,mimeType,parents,resourceKey,trashed)")
+		q.Set("pageSize", "1000")
+		q.Set("supportsAllDrives", "true")
+		q.Set("includeItemsFromAllDrives", "true")
+		if pageToken != "" {
+			q.Set("pageToken", pageToken)
+		}
+		req, err := http.NewRequest(http.MethodGet, driveAPIBase+"/drive/v3/files?"+q.Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+		resp, err := a.client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("drive child folder listing returned %d: %s", resp.StatusCode, string(raw))
+		}
+		var payload struct {
+			Files         []driveFileMetadata `json:"files"`
+			NextPageToken string              `json:"nextPageToken"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, err
+		}
+		out = append(out, payload.Files...)
+		if payload.NextPageToken == "" {
+			return out, nil
+		}
+		pageToken = payload.NextPageToken
+	}
+}
+
+func drivePathKey(path string) string {
+	return strings.ToLower(strings.TrimSpace(path))
+}
+
+func normalizeDrivePath(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	raw = strings.Trim(raw, "/")
+	if raw == "" {
+		return "", nil
+	}
+	parts := []string{}
+	for _, part := range strings.Split(raw, "/") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if part == "." || part == ".." {
+			return "", fmt.Errorf("drivePath cannot contain . or .. segments")
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, "/"), nil
+}
+
+func joinDrivePath(parentPath, name string) string {
+	if parentPath == "" {
+		return name
+	}
+	return parentPath + "/" + name
+}
+
+func (a *App) refreshDriveFolderTree(userID, accessToken string, root *AllowedDriveFolder) error {
+	if root == nil {
+		return fmt.Errorf("allowed folder is required")
+	}
+	rootEntry := DriveFolderTreeEntry{
+		UserID:      userID,
+		RootRefID:   root.ID,
+		FolderID:    root.FolderID,
+		FolderName:  root.FolderName,
+		Path:        "",
+		PathKey:     "",
+		Depth:       0,
+		ResourceKey: root.ResourceKey,
+	}
+	entries := []DriveFolderTreeEntry{rootEntry}
+	queue := []DriveFolderTreeEntry{rootEntry}
+	visited := map[string]bool{root.FolderID: true}
+
+	for len(queue) > 0 {
+		parent := queue[0]
+		queue = queue[1:]
+		children, err := a.listDriveChildFolders(accessToken, parent.FolderID)
+		if err != nil {
+			return err
+		}
+		for _, child := range children {
+			if child.ID == "" || visited[child.ID] || child.Trashed {
+				continue
+			}
+			visited[child.ID] = true
+			childEntry := DriveFolderTreeEntry{
+				UserID:         userID,
+				RootRefID:      root.ID,
+				FolderID:       child.ID,
+				ParentFolderID: parent.FolderID,
+				FolderName:     child.Name,
+				Path:           joinDrivePath(parent.Path, child.Name),
+				Depth:          parent.Depth + 1,
+				ResourceKey:    child.ResourceKey,
+			}
+			childEntry.PathKey = drivePathKey(childEntry.Path)
+			entries = append(entries, childEntry)
+			queue = append(queue, childEntry)
+		}
+	}
+	return a.store.ReplaceDriveFolderTree(userID, root.ID, entries)
+}
+
+func (a *App) ensureDriveFolderTreeCache(userID, accessToken string, root *AllowedDriveFolder) error {
+	entries, err := a.store.ListDriveFolderTree(userID, root.ID)
+	if err != nil {
+		return err
+	}
+	if len(entries) > 0 {
+		return nil
+	}
+	return a.refreshDriveFolderTree(userID, accessToken, root)
+}
+
+func collectDriveSubtreeFolderIDs(entries []DriveFolderTreeEntry, targetFolderID string) []string {
+	children := map[string][]string{}
+	known := map[string]bool{}
+	for _, entry := range entries {
+		known[entry.FolderID] = true
+		children[entry.ParentFolderID] = append(children[entry.ParentFolderID], entry.FolderID)
+	}
+	if !known[targetFolderID] {
+		return []string{targetFolderID}
+	}
+	out := []string{}
+	queue := []string{targetFolderID}
+	seen := map[string]bool{}
+	for len(queue) > 0 {
+		folderID := queue[0]
+		queue = queue[1:]
+		if folderID == "" || seen[folderID] {
+			continue
+		}
+		seen[folderID] = true
+		out = append(out, folderID)
+		queue = append(queue, children[folderID]...)
+	}
+	return out
+}
+
+func (a *App) resolveDriveTargetFolderID(userID, accessToken string, selectedRef *AllowedDriveFolder, drivePath, driveFolderID string) (string, error) {
+	if selectedRef == nil {
+		return "", fmt.Errorf("driveRef is required when selecting a subfolder")
+	}
+	if drivePath != "" && driveFolderID != "" {
+		return "", fmt.Errorf("use either drivePath or driveFolderId, not both")
+	}
+	if err := a.ensureDriveFolderTreeCache(userID, accessToken, selectedRef); err != nil {
+		return "", err
+	}
+	if driveFolderID != "" {
+		if driveFolderID == selectedRef.FolderID {
+			return driveFolderID, nil
+		}
+		entry, err := a.store.FindDriveFolderTreeByFolderID(userID, selectedRef.ID, driveFolderID)
+		if err != nil {
+			return "", err
+		}
+		if entry == nil {
+			if err := a.refreshDriveFolderTree(userID, accessToken, selectedRef); err != nil {
+				return "", err
+			}
+			entry, err = a.store.FindDriveFolderTreeByFolderID(userID, selectedRef.ID, driveFolderID)
+			if err != nil {
+				return "", err
+			}
+		}
+		if entry == nil {
+			return "", fmt.Errorf("driveFolderId is outside the selected driveRef")
+		}
+		return driveFolderID, nil
+	}
+	normalizedPath, err := normalizeDrivePath(drivePath)
+	if err != nil {
+		return "", err
+	}
+	if normalizedPath == "" {
+		return selectedRef.FolderID, nil
+	}
+	matches, err := a.store.FindDriveFolderTreeByPathKey(userID, selectedRef.ID, drivePathKey(normalizedPath))
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 0 {
+		if err := a.refreshDriveFolderTree(userID, accessToken, selectedRef); err != nil {
+			return "", err
+		}
+		matches, err = a.store.FindDriveFolderTreeByPathKey(userID, selectedRef.ID, drivePathKey(normalizedPath))
+		if err != nil {
+			return "", err
+		}
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("drivePath %q was not found under driveRef %q", normalizedPath, selectedRef.ReferenceName)
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("drivePath %q is ambiguous under driveRef %q; use driveFolderId", normalizedPath, selectedRef.ReferenceName)
+	}
+	return matches[0].FolderID, nil
+}
+
+func (a *App) resolveDriveSearchFolderIDs(userID, accessToken string, folders []AllowedDriveFolder, selectedRef *AllowedDriveFolder, drivePath, driveFolderID string) ([]string, error) {
+	if drivePath != "" || driveFolderID != "" {
+		targetID, err := a.resolveDriveTargetFolderID(userID, accessToken, selectedRef, drivePath, driveFolderID)
+		if err != nil {
+			return nil, err
+		}
+		entries, err := a.store.ListDriveFolderTree(userID, selectedRef.ID)
+		if err != nil {
+			return nil, err
+		}
+		return collectDriveSubtreeFolderIDs(entries, targetID), nil
+	}
+	out := []string{}
+	for i := range folders {
+		if err := a.ensureDriveFolderTreeCache(userID, accessToken, &folders[i]); err != nil {
+			return nil, err
+		}
+		entries, err := a.store.ListDriveFolderTree(userID, folders[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			out = append(out, entry.FolderID)
+		}
+	}
+	return out, nil
 }
 
 func extractPrimaryIDFromPath(path, prefix string) string {
@@ -1043,29 +1547,40 @@ func mustJSON(v any) []byte {
 
 func (a *App) rewriteWorkspaceRequest(userID, accessToken, method string, target relayTarget, body []byte, query url.Values) ([]byte, string, string, error) {
 	refName := query.Get("driveRef")
+	drivePath := query.Get("drivePath")
+	driveFolderID := query.Get("driveFolderId")
 	query.Del("driveRef")
+	query.Del("drivePath")
+	query.Del("driveFolderId")
 	selectedFolders, selectedRef, err := a.resolveReferenceFolders(userID, refName)
 	if err != nil && target.serviceLabel != "gmail" && target.serviceLabel != "calendar" {
 		return body, "", "", err
 	}
 	switch target.serviceLabel {
 	case "drive":
-		return a.rewriteDriveRequest(accessToken, method, target.normalizedPath, body, query, selectedFolders, selectedRef)
+		return a.rewriteDriveRequest(userID, accessToken, method, target.normalizedPath, body, query, selectedFolders, selectedRef, drivePath, driveFolderID)
 	case "docs":
-		return a.rewriteStructuredFileRequest(accessToken, target.serviceLabel, method, target.normalizedPath, body, query, selectedFolders, selectedRef)
+		return a.rewriteStructuredFileRequest(userID, accessToken, target.serviceLabel, method, target.normalizedPath, body, query, selectedFolders, selectedRef, drivePath, driveFolderID)
 	case "sheets":
-		return a.rewriteStructuredFileRequest(accessToken, target.serviceLabel, method, target.normalizedPath, body, query, selectedFolders, selectedRef)
+		return a.rewriteStructuredFileRequest(userID, accessToken, target.serviceLabel, method, target.normalizedPath, body, query, selectedFolders, selectedRef, drivePath, driveFolderID)
 	case "slides":
-		return a.rewriteStructuredFileRequest(accessToken, target.serviceLabel, method, target.normalizedPath, body, query, selectedFolders, selectedRef)
+		return a.rewriteStructuredFileRequest(userID, accessToken, target.serviceLabel, method, target.normalizedPath, body, query, selectedFolders, selectedRef, drivePath, driveFolderID)
 	default:
 		return body, query.Encode(), "", nil
 	}
 }
 
-func (a *App) rewriteDriveRequest(accessToken, method, path string, body []byte, query url.Values, folders []AllowedDriveFolder, selectedRef *AllowedDriveFolder) ([]byte, string, string, error) {
+func (a *App) rewriteDriveRequest(userID, accessToken, method, path string, body []byte, query url.Values, folders []AllowedDriveFolder, selectedRef *AllowedDriveFolder, drivePath, driveFolderID string) ([]byte, string, string, error) {
 	query.Set("supportsAllDrives", "true")
 	if path == "/drive/v3/files" && method == http.MethodGet {
-		clause := buildFolderQueryClause(folders)
+		folderIDs, err := a.resolveDriveSearchFolderIDs(userID, accessToken, folders, selectedRef, drivePath, driveFolderID)
+		if err != nil {
+			return body, "", "", err
+		}
+		clause := buildFolderQueryClause(folderIDs)
+		if clause == "" {
+			return body, "", "", fmt.Errorf("no cached Drive folders are available for search")
+		}
 		existingQ := strings.TrimSpace(query.Get("q"))
 		if existingQ != "" {
 			query.Set("q", fmt.Sprintf("(%s) and (%s)", existingQ, clause))
@@ -1079,6 +1594,10 @@ func (a *App) rewriteDriveRequest(accessToken, method, path string, body []byte,
 		if selectedRef == nil {
 			return body, "", "", fmt.Errorf("Drive create requires driveRef with an allowed Reference Name")
 		}
+		targetFolderID, err := a.resolveDriveTargetFolderID(userID, accessToken, selectedRef, drivePath, driveFolderID)
+		if err != nil {
+			return body, "", "", err
+		}
 		m, err := parseJSONMap(body)
 		if err != nil {
 			return body, "", "", err
@@ -1087,13 +1606,13 @@ func (a *App) rewriteDriveRequest(accessToken, method, path string, body []byte,
 		if !kindAllowedInFolder(selectedRef, kind) {
 			return body, "", "", fmt.Errorf("selected folder does not allow %s files", kind)
 		}
-		m["parents"] = []string{selectedRef.FolderID}
+		m["parents"] = []string{targetFolderID}
 		delete(m, "trashed")
 		return mustJSON(m), query.Encode(), "", nil
 	}
 	if strings.HasPrefix(path, "/drive/v3/files/") {
 		fileID := extractPrimaryIDFromPath(path, "/drive/v3/files/")
-		meta, folder, err := a.ensureFileInAllowedFolders(accessToken, fileID, folders)
+		meta, folder, err := a.ensureFileInAllowedFolders(userID, accessToken, fileID, folders)
 		if err != nil {
 			return body, "", "", err
 		}
@@ -1117,7 +1636,7 @@ func (a *App) rewriteDriveRequest(accessToken, method, path string, body []byte,
 	return body, query.Encode(), "", nil
 }
 
-func (a *App) rewriteStructuredFileRequest(accessToken, service, method, path string, body []byte, query url.Values, folders []AllowedDriveFolder, selectedRef *AllowedDriveFolder) ([]byte, string, string, error) {
+func (a *App) rewriteStructuredFileRequest(userID, accessToken, service, method, path string, body []byte, query url.Values, folders []AllowedDriveFolder, selectedRef *AllowedDriveFolder, drivePath, driveFolderID string) ([]byte, string, string, error) {
 	kind := service
 	createPath := map[string]string{"docs": "/v1/documents", "sheets": "/v4/spreadsheets", "slides": "/v1/presentations"}[service]
 	if path == createPath && method == http.MethodPost {
@@ -1127,13 +1646,17 @@ func (a *App) rewriteStructuredFileRequest(accessToken, service, method, path st
 		if !kindAllowedInFolder(selectedRef, kind) {
 			return body, "", "", fmt.Errorf("selected folder does not allow %s files", kind)
 		}
-		return body, query.Encode(), selectedRef.FolderID, nil
+		targetFolderID, err := a.resolveDriveTargetFolderID(userID, accessToken, selectedRef, drivePath, driveFolderID)
+		if err != nil {
+			return body, "", "", err
+		}
+		return body, query.Encode(), targetFolderID, nil
 	}
 	fileID := extractStructuredFileID(service, path)
 	if fileID == "" {
 		return body, query.Encode(), "", nil
 	}
-	meta, folder, err := a.ensureFileInAllowedFolders(accessToken, fileID, folders)
+	meta, folder, err := a.ensureFileInAllowedFolders(userID, accessToken, fileID, folders)
 	if err != nil {
 		return body, "", "", err
 	}
@@ -1164,7 +1687,7 @@ func extractStructuredFileID(service, path string) string {
 	return ""
 }
 
-func (a *App) ensureFileInAllowedFolders(accessToken, fileID string, folders []AllowedDriveFolder) (*driveFileMetadata, *AllowedDriveFolder, error) {
+func (a *App) ensureFileInAllowedFolders(userID, accessToken, fileID string, folders []AllowedDriveFolder) (*driveFileMetadata, *AllowedDriveFolder, error) {
 	meta, err := a.fetchDriveFileMetadata(accessToken, fileID, "")
 	if err != nil {
 		return nil, nil, err
@@ -1172,15 +1695,39 @@ func (a *App) ensureFileInAllowedFolders(accessToken, fileID string, folders []A
 	if meta.Trashed {
 		return nil, nil, fmt.Errorf("file is trashed")
 	}
+	if folder := matchFileToAllowedFolder(userID, meta, folders, a.store); folder != nil {
+		return meta, folder, nil
+	}
+	for i := range folders {
+		if err := a.refreshDriveFolderTree(userID, accessToken, &folders[i]); err != nil {
+			return nil, nil, err
+		}
+	}
+	if folder := matchFileToAllowedFolder(userID, meta, folders, a.store); folder != nil {
+		return meta, folder, nil
+	}
+	return nil, nil, fmt.Errorf("file is outside the allowed Drive folders")
+}
+
+func matchFileToAllowedFolder(userID string, meta *driveFileMetadata, folders []AllowedDriveFolder, store *Store) *AllowedDriveFolder {
 	for _, folder := range folders {
+		if meta.ID == folder.FolderID {
+			copy := folder
+			return &copy
+		}
 		for _, parent := range meta.Parents {
 			if parent == folder.FolderID {
 				copy := folder
-				return meta, &copy, nil
+				return &copy
+			}
+			entry, err := store.FindDriveFolderTreeByFolderID(userID, folder.ID, parent)
+			if err == nil && entry != nil {
+				copy := folder
+				return &copy
 			}
 		}
 	}
-	return nil, nil, fmt.Errorf("file is outside the allowed Drive folders")
+	return nil
 }
 
 func (a *App) postCreateMoveToFolder(accessToken, service string, responseBody []byte, folderID string) error {
