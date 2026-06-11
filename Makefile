@@ -18,14 +18,13 @@ run: build
 	APP_NAME="$(APP_NAME)" \
 	DB_PATH=$(DB_DIR)/ai_workspace_proxy.sqlite3 \
 	DENIED_LOG_PATH=$(LOG_DIR)/denied.log \
-	POLICY_PATH=$(ROOT_DIR)/policy.json \
 	./$(BIN_DIR)/$(BINARY)
 
 fmt:
 	gofmt -w $(SRC_DIR)/*.go
 
 docker:
-	docker build -t $(BINARY) .
+	DOCKER_BUILDKIT=1 BUILDX_GIT_INFO=false docker build -t $(BINARY) .
 
 clean:
 	rm -f $(BIN_DIR)/$(BINARY)

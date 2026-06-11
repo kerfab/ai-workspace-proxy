@@ -21,6 +21,5 @@ chmod 700 ./db ./logs
 echo "Setup completed."
 echo "Next steps:"
 echo "  1. Source config.env.example or export equivalent env vars"
-echo "  2. Edit policy.json if needed"
-echo "  3. Run: make build"
-echo "  4. Run: make run"
+echo "  2. Run: make build"
+echo "  3. Run: make run"

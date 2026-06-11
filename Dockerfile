@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 FROM golang:1.22-alpine AS build
 
 RUN apk add --no-cache build-base sqlite-dev
@@ -5,12 +7,14 @@ RUN apk add --no-cache build-base sqlite-dev
 WORKDIR /src
 
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 COPY src ./src
-COPY policy.json ./policy.json
 
-RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 \
     go build -trimpath -ldflags="-s -w" -o /out/ai-workspace-proxy ./src
 
 FROM alpine:3.20
@@ -20,7 +24,6 @@ RUN apk add --no-cache ca-certificates sqlite-libs tzdata
 WORKDIR /app
 
 COPY --from=build /out/ai-workspace-proxy /app/ai-workspace-proxy
-COPY policy.json /app/policy.json
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 
 RUN chmod +x /app/docker-entrypoint.sh \
@@ -29,7 +32,6 @@ RUN chmod +x /app/docker-entrypoint.sh \
 ENV APP_NAME="AI Workspace Proxy" \
     APP_BIND_ADDR=":80" \
     DB_PATH="/data/db/ai_workspace_proxy.sqlite3" \
-    POLICY_PATH="/app/policy.json" \
     DENIED_LOG_PATH="/data/logs/denied.log" \
     COOKIE_SECURE="true"
 

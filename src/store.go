@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -53,19 +54,33 @@ func (s *Store) Init() error {
 			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 		);`,
 		`CREATE TABLE IF NOT EXISTS gmail_connections (
-			user_id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
 			mailbox_email TEXT NOT NULL,
+			friendly_name TEXT NOT NULL,
+			policy_id TEXT NOT NULL DEFAULT 'system',
 			scopes TEXT NOT NULL,
 			access_token_enc TEXT,
 			refresh_token_enc TEXT NOT NULL,
 			token_expiry TEXT,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
+			PRIMARY KEY(user_id, mailbox_email),
 			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE IF NOT EXISTS workspace_order (
+			user_id TEXT NOT NULL,
+			mailbox_email TEXT NOT NULL,
+			sort_order INTEGER NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(user_id, mailbox_email),
+			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+			FOREIGN KEY(user_id, mailbox_email) REFERENCES gmail_connections(user_id, mailbox_email) ON DELETE CASCADE
 		);`,
 		`CREATE TABLE IF NOT EXISTS drive_folder_refs (
 			id TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL,
+			mailbox_email TEXT NOT NULL,
 			reference_name TEXT NOT NULL,
 			reference_key TEXT NOT NULL,
 			folder_url TEXT NOT NULL,
@@ -79,7 +94,7 @@ func (s *Store) Init() error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-			UNIQUE(user_id, reference_key)
+			UNIQUE(user_id, mailbox_email, reference_key)
 		);`,
 		`CREATE TABLE IF NOT EXISTS drive_folder_tree_cache (
 			user_id TEXT NOT NULL,
@@ -105,14 +120,42 @@ func (s *Store) Init() error {
 			PRIMARY KEY (user_id, day),
 			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 		);`,
+		`CREATE TABLE IF NOT EXISTS user_settings (
+			user_id TEXT PRIMARY KEY,
+			timezone TEXT NOT NULL,
+			default_policy_id TEXT NOT NULL DEFAULT 'system',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE IF NOT EXISTS user_policies (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			capabilities TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+			UNIQUE(user_id, name)
+		);`,
+	}
+	for _, stmt := range stmts {
+		if err := s.db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	indexes := []string{
 		`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);`,
-		`CREATE INDEX IF NOT EXISTS idx_drive_folder_refs_user_id ON drive_folder_refs(user_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_gmail_connections_user ON gmail_connections(user_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_workspace_order_user_sort ON workspace_order(user_id, sort_order);`,
+		`CREATE INDEX IF NOT EXISTS idx_user_policies_user ON user_policies(user_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_drive_folder_refs_user_workspace ON drive_folder_refs(user_id, mailbox_email);`,
 		`CREATE INDEX IF NOT EXISTS idx_drive_folder_tree_root ON drive_folder_tree_cache(user_id, root_ref_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_drive_folder_tree_path ON drive_folder_tree_cache(user_id, root_ref_id, path_key);`,
 		`CREATE INDEX IF NOT EXISTS idx_drive_folder_tree_folder ON drive_folder_tree_cache(user_id, folder_id);`,
 	}
-	for _, stmt := range stmts {
+	for _, stmt := range indexes {
 		if err := s.db.Exec(stmt); err != nil {
 			return err
 		}
@@ -195,9 +238,12 @@ func (s *Store) DeleteUser(userID string) error {
 		{`DELETE FROM sessions WHERE user_id = ?;`, []any{userID}},
 		{`DELETE FROM oauth_states WHERE user_id = ?;`, []any{userID}},
 		{`DELETE FROM proxy_tokens WHERE user_id = ?;`, []any{userID}},
-		{`DELETE FROM gmail_connections WHERE user_id = ?;`, []any{userID}},
+		{`DELETE FROM workspace_order WHERE user_id = ?;`, []any{userID}},
 		{`DELETE FROM drive_folder_refs WHERE user_id = ?;`, []any{userID}},
+		{`DELETE FROM gmail_connections WHERE user_id = ?;`, []any{userID}},
 		{`DELETE FROM user_daily_stats WHERE user_id = ?;`, []any{userID}},
+		{`DELETE FROM user_settings WHERE user_id = ?;`, []any{userID}},
+		{`DELETE FROM user_policies WHERE user_id = ?;`, []any{userID}},
 		{`DELETE FROM users WHERE id = ?;`, []any{userID}},
 	} {
 		if err := s.db.Exec(stmt.q, stmt.args...); err != nil {
@@ -278,28 +324,203 @@ func (s *Store) TouchProxyTokenUsage(userID string) error {
 
 func (s *Store) SaveGmailConnection(conn *GmailConnection) error {
 	now := nowUTC()
-	return s.db.Exec(`INSERT INTO gmail_connections (user_id, mailbox_email, scopes, access_token_enc, refresh_token_enc, token_expiry, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(user_id) DO UPDATE SET
-			mailbox_email = excluded.mailbox_email,
+	conn.MailboxEmail = normalizeEmail(conn.MailboxEmail)
+	friendlyName := strings.TrimSpace(conn.FriendlyName)
+	if friendlyName == "" {
+		friendlyName = conn.MailboxEmail
+	}
+	existing, err := s.GetGmailConnection(conn.UserID, conn.MailboxEmail)
+	if err != nil {
+		return err
+	}
+	policyID := strings.TrimSpace(conn.PolicyID)
+	if policyID == "" {
+		policyID = systemPolicyID
+	}
+	if existing != nil && strings.TrimSpace(conn.PolicyID) == "" {
+		policyID = existing.PolicyID
+	}
+	if policyID != systemPolicyID {
+		policy, err := s.GetUserPolicy(conn.UserID, policyID)
+		if err != nil {
+			return err
+		}
+		if policy == nil {
+			return fmt.Errorf("policy not found")
+		}
+	}
+	if err := s.db.Exec(`INSERT INTO gmail_connections (user_id, mailbox_email, friendly_name, policy_id, scopes, access_token_enc, refresh_token_enc, token_expiry, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(user_id, mailbox_email) DO UPDATE SET
+			friendly_name = excluded.friendly_name,
+			policy_id = excluded.policy_id,
 			scopes = excluded.scopes,
 			access_token_enc = excluded.access_token_enc,
 			refresh_token_enc = excluded.refresh_token_enc,
 			token_expiry = excluded.token_expiry,
 			updated_at = excluded.updated_at;`,
-		conn.UserID, conn.MailboxEmail, conn.Scopes, conn.AccessTokenEnc, conn.RefreshTokenEnc, conn.TokenExpiry, now, now)
+		conn.UserID, conn.MailboxEmail, friendlyName, policyID, conn.Scopes, conn.AccessTokenEnc, conn.RefreshTokenEnc, conn.TokenExpiry, now, now); err != nil {
+		return err
+	}
+	if existing == nil {
+		if err := s.db.Exec(`UPDATE workspace_order SET sort_order = sort_order + 1, updated_at = ? WHERE user_id = ?;`, now, conn.UserID); err != nil {
+			return err
+		}
+		return s.db.Exec(`INSERT INTO workspace_order (user_id, mailbox_email, sort_order, created_at, updated_at)
+			VALUES (?, ?, 0, ?, ?);`, conn.UserID, conn.MailboxEmail, now, now)
+	}
+	return nil
 }
 
-func (s *Store) GetGmailConnection(userID string) (*GmailConnection, error) {
-	row, err := s.db.QueryOne(`SELECT * FROM gmail_connections WHERE user_id = ?;`, userID)
+func (s *Store) GetGmailConnection(userID, mailboxEmail string) (*GmailConnection, error) {
+	row, err := s.db.QueryOne(`SELECT * FROM gmail_connections WHERE user_id = ? AND mailbox_email = ?;`, userID, normalizeEmail(mailboxEmail))
 	if err != nil {
 		return nil, err
 	}
 	return gmailConnectionFromRow(row), nil
 }
 
-func (s *Store) DeleteGmailConnection(userID string) error {
-	return s.db.Exec(`DELETE FROM gmail_connections WHERE user_id = ?;`, userID)
+func (s *Store) ListGmailConnections(userID string) ([]GmailConnection, error) {
+	rows, err := s.db.Query(`SELECT g.* FROM gmail_connections g
+		LEFT JOIN workspace_order wo ON wo.user_id = g.user_id AND wo.mailbox_email = g.mailbox_email
+		WHERE g.user_id = ?
+		ORDER BY COALESCE(wo.sort_order, 999999) ASC, g.mailbox_email ASC;`, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]GmailConnection, 0, len(rows))
+	for _, row := range rows {
+		if conn := gmailConnectionFromRow(row); conn != nil {
+			out = append(out, *conn)
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) ResolveGmailConnection(userID, workspace string) (*GmailConnection, error) {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return nil, fmt.Errorf("workspace is required")
+	}
+	rows, err := s.db.Query(`SELECT g.* FROM gmail_connections g
+		LEFT JOIN workspace_order wo ON wo.user_id = g.user_id AND wo.mailbox_email = g.mailbox_email
+		WHERE g.user_id = ?
+		ORDER BY COALESCE(wo.sort_order, 999999) ASC, g.mailbox_email ASC;`, userID)
+	if err != nil {
+		return nil, err
+	}
+	var friendlyMatches []GmailConnection
+	for _, row := range rows {
+		if conn := gmailConnectionFromRow(row); conn != nil && conn.FriendlyName == workspace {
+			friendlyMatches = append(friendlyMatches, *conn)
+		}
+	}
+	if len(friendlyMatches) == 1 {
+		return &friendlyMatches[0], nil
+	}
+	if len(friendlyMatches) > 1 {
+		return nil, fmt.Errorf("workspace friendly name is ambiguous; use the full email address")
+	}
+	for _, row := range rows {
+		if conn := gmailConnectionFromRow(row); conn != nil && normalizeEmail(conn.MailboxEmail) == normalizeEmail(workspace) {
+			return conn, nil
+		}
+	}
+	return nil, fmt.Errorf("workspace not found")
+}
+
+func (s *Store) UpdateGmailConnectionFriendlyName(userID, mailboxEmail, friendlyName string) error {
+	friendlyName = strings.TrimSpace(friendlyName)
+	if friendlyName == "" {
+		return fmt.Errorf("friendly name cannot be empty")
+	}
+	return s.db.Exec(`UPDATE gmail_connections SET friendly_name = ?, updated_at = ? WHERE user_id = ? AND mailbox_email = ?;`,
+		friendlyName, nowUTC(), userID, normalizeEmail(mailboxEmail))
+}
+
+func (s *Store) UpdateGmailConnectionPolicy(userID, mailboxEmail, policyID string) error {
+	policyID = strings.TrimSpace(policyID)
+	if policyID == "" {
+		policyID = systemPolicyID
+	}
+	if policyID != systemPolicyID {
+		policy, err := s.GetUserPolicy(userID, policyID)
+		if err != nil {
+			return err
+		}
+		if policy == nil {
+			return fmt.Errorf("policy not found")
+		}
+	}
+	conn, err := s.GetGmailConnection(userID, mailboxEmail)
+	if err != nil {
+		return err
+	}
+	if conn == nil {
+		return fmt.Errorf("workspace not found")
+	}
+	return s.db.Exec(`UPDATE gmail_connections SET policy_id = ?, updated_at = ? WHERE user_id = ? AND mailbox_email = ?;`,
+		policyID, nowUTC(), userID, normalizeEmail(mailboxEmail))
+}
+
+func (s *Store) DeleteGmailConnection(userID, mailboxEmail string) error {
+	mailboxEmail = normalizeEmail(mailboxEmail)
+	refs, err := s.ListDriveFolderRefs(userID, mailboxEmail)
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		if err := s.DeleteDriveFolderRef(userID, mailboxEmail, ref.ID); err != nil {
+			return err
+		}
+	}
+	if err := s.db.Exec(`DELETE FROM workspace_order WHERE user_id = ? AND mailbox_email = ?;`, userID, mailboxEmail); err != nil {
+		return err
+	}
+	return s.db.Exec(`DELETE FROM gmail_connections WHERE user_id = ? AND mailbox_email = ?;`, userID, mailboxEmail)
+}
+
+func (s *Store) SaveWorkspaceOrder(userID string, mailboxEmails []string) error {
+	known, err := s.ListGmailConnections(userID)
+	if err != nil {
+		return err
+	}
+	knownSet := map[string]bool{}
+	for _, conn := range known {
+		knownSet[conn.MailboxEmail] = true
+	}
+	seen := map[string]bool{}
+	now := nowUTC()
+	order := 0
+	for _, email := range mailboxEmails {
+		email = normalizeEmail(email)
+		if email == "" || seen[email] || !knownSet[email] {
+			continue
+		}
+		seen[email] = true
+		if err := s.db.Exec(`INSERT INTO workspace_order (user_id, mailbox_email, sort_order, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(user_id, mailbox_email) DO UPDATE SET
+				sort_order = excluded.sort_order,
+				updated_at = excluded.updated_at;`, userID, email, order, now, now); err != nil {
+			return err
+		}
+		order++
+	}
+	for _, conn := range known {
+		if seen[conn.MailboxEmail] {
+			continue
+		}
+		if err := s.db.Exec(`INSERT INTO workspace_order (user_id, mailbox_email, sort_order, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(user_id, mailbox_email) DO UPDATE SET
+				sort_order = excluded.sort_order,
+				updated_at = excluded.updated_at;`, userID, conn.MailboxEmail, order, now, now); err != nil {
+			return err
+		}
+		order++
+	}
+	return nil
 }
 
 func (s *Store) IncrementDailyStat(userID string, allowed bool) error {
@@ -331,8 +552,207 @@ func (s *Store) GetUserDailyStats(userID string, days int) ([]UserDailyStat, err
 	return out, nil
 }
 
-func (s *Store) ListDriveFolderRefs(userID string) ([]AllowedDriveFolder, error) {
-	rows, err := s.db.Query(`SELECT * FROM drive_folder_refs WHERE user_id = ? ORDER BY reference_name ASC;`, userID)
+func (s *Store) GetUserSettings(userID string) (*UserSettings, error) {
+	row, err := s.db.QueryOne(`SELECT * FROM user_settings WHERE user_id = ?;`, userID)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		now := nowUTC()
+		return &UserSettings{UserID: userID, Timezone: "UTC", DefaultPolicyID: systemPolicyID, CreatedAt: now, UpdatedAt: now}, nil
+	}
+	return userSettingsFromRow(row), nil
+}
+
+func (s *Store) SaveUserTimezone(userID, timezone string) error {
+	timezone = strings.TrimSpace(timezone)
+	if timezone == "" {
+		return fmt.Errorf("timezone cannot be empty")
+	}
+	if _, err := time.LoadLocation(timezone); err != nil {
+		return fmt.Errorf("invalid timezone")
+	}
+	now := nowUTC()
+	return s.db.Exec(`INSERT INTO user_settings (user_id, timezone, default_policy_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET
+			timezone = excluded.timezone,
+			updated_at = excluded.updated_at;`, userID, timezone, systemPolicyID, now, now)
+}
+
+func (s *Store) SaveDefaultPolicyID(userID, policyID string) error {
+	policyID = strings.TrimSpace(policyID)
+	if policyID == "" {
+		policyID = systemPolicyID
+	}
+	if policyID != systemPolicyID {
+		policy, err := s.GetUserPolicy(userID, policyID)
+		if err != nil {
+			return err
+		}
+		if policy == nil {
+			return fmt.Errorf("policy not found")
+		}
+	}
+	settings, err := s.GetUserSettings(userID)
+	if err != nil {
+		return err
+	}
+	now := nowUTC()
+	return s.db.Exec(`INSERT INTO user_settings (user_id, timezone, default_policy_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET
+			default_policy_id = excluded.default_policy_id,
+			updated_at = excluded.updated_at;`, userID, settings.Timezone, policyID, now, now)
+}
+
+func (s *Store) ListUserPolicies(userID string) ([]UserPolicy, error) {
+	rows, err := s.db.Query(`SELECT * FROM user_policies WHERE user_id = ? ORDER BY name ASC;`, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]UserPolicy, 0, len(rows))
+	for _, row := range rows {
+		if policy := userPolicyFromRow(row); policy != nil {
+			out = append(out, *policy)
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) GetUserPolicy(userID, policyID string) (*UserPolicy, error) {
+	row, err := s.db.QueryOne(`SELECT * FROM user_policies WHERE user_id = ? AND id = ?;`, userID, policyID)
+	if err != nil {
+		return nil, err
+	}
+	return userPolicyFromRow(row), nil
+}
+
+func (s *Store) SaveUserPolicy(policy *UserPolicy) error {
+	policy.Name = strings.TrimSpace(policy.Name)
+	if policy.Name == "" {
+		return fmt.Errorf("policy name cannot be empty")
+	}
+	if policy.ID == "" {
+		id, err := RandomUUID()
+		if err != nil {
+			return err
+		}
+		policy.ID = id
+	} else {
+		row, err := s.db.QueryOne(`SELECT user_id FROM user_policies WHERE id = ?;`, policy.ID)
+		if err != nil {
+			return err
+		}
+		if row != nil && row["user_id"] != policy.UserID {
+			return fmt.Errorf("policy not found")
+		}
+	}
+	policy.EnabledCapabilities = validCapabilityKeys(policy.EnabledCapabilities)
+	rawCapabilities, err := json.Marshal(policy.EnabledCapabilities)
+	if err != nil {
+		return err
+	}
+	now := nowUTC()
+	return s.db.Exec(`INSERT INTO user_policies (id, user_id, name, capabilities, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name = excluded.name,
+			capabilities = excluded.capabilities,
+			updated_at = excluded.updated_at;`,
+		policy.ID, policy.UserID, policy.Name, string(rawCapabilities), now, now)
+}
+
+func (s *Store) DeleteUserPolicy(userID, policyID string) (bool, error) {
+	if policyID == systemPolicyID {
+		return false, fmt.Errorf("system default policy cannot be deleted")
+	}
+	policy, err := s.GetUserPolicy(userID, policyID)
+	if err != nil {
+		return false, err
+	}
+	if policy == nil {
+		return false, fmt.Errorf("policy not found")
+	}
+	settings, err := s.GetUserSettings(userID)
+	if err != nil {
+		return false, err
+	}
+	wasDefault := settings.DefaultPolicyID == policyID
+	usedByWorkspace, err := s.PolicyUsedByWorkspace(userID, policyID)
+	if err != nil {
+		return false, err
+	}
+	if wasDefault {
+		if err := s.SaveDefaultPolicyID(userID, systemPolicyID); err != nil {
+			return false, err
+		}
+	}
+	if usedByWorkspace {
+		if err := s.db.Exec(`UPDATE gmail_connections SET policy_id = ?, updated_at = ? WHERE user_id = ? AND policy_id = ?;`,
+			systemPolicyID, nowUTC(), userID, policyID); err != nil {
+			return false, err
+		}
+	}
+	if err := s.db.Exec(`DELETE FROM user_policies WHERE user_id = ? AND id = ?;`, userID, policyID); err != nil {
+		return false, err
+	}
+	return wasDefault || usedByWorkspace, nil
+}
+
+func (s *Store) PolicyUsedByWorkspace(userID, policyID string) (bool, error) {
+	row, err := s.db.QueryOne(`SELECT COUNT(*) AS cnt FROM gmail_connections WHERE user_id = ? AND policy_id = ?;`, userID, policyID)
+	if err != nil || row == nil {
+		return false, err
+	}
+	return atoiSafe(row["cnt"]) > 0, nil
+}
+
+func (s *Store) DefaultPolicyCapabilities(userID string) ([]string, string, error) {
+	settings, err := s.GetUserSettings(userID)
+	if err != nil {
+		return nil, "", err
+	}
+	if settings.DefaultPolicyID == "" || settings.DefaultPolicyID == systemPolicyID {
+		return SystemDefaultCapabilityKeys(), systemPolicyID, nil
+	}
+	policy, err := s.GetUserPolicy(userID, settings.DefaultPolicyID)
+	if err != nil {
+		return nil, "", err
+	}
+	if policy == nil {
+		if err := s.SaveDefaultPolicyID(userID, systemPolicyID); err != nil {
+			return nil, "", err
+		}
+		return SystemDefaultCapabilityKeys(), systemPolicyID, nil
+	}
+	return policy.EnabledCapabilities, policy.ID, nil
+}
+
+func (s *Store) WorkspacePolicyCapabilities(userID, mailboxEmail string) ([]string, string, error) {
+	conn, err := s.GetGmailConnection(userID, mailboxEmail)
+	if err != nil {
+		return nil, "", err
+	}
+	if conn == nil {
+		return nil, "", fmt.Errorf("workspace not found")
+	}
+	policyID := strings.TrimSpace(conn.PolicyID)
+	if policyID == "" || policyID == systemPolicyID {
+		return SystemDefaultCapabilityKeys(), systemPolicyID, nil
+	}
+	policy, err := s.GetUserPolicy(userID, policyID)
+	if err != nil {
+		return nil, "", err
+	}
+	if policy == nil {
+		return nil, "", fmt.Errorf("policy not found")
+	}
+	return policy.EnabledCapabilities, policy.ID, nil
+}
+
+func (s *Store) ListDriveFolderRefs(userID, mailboxEmail string) ([]AllowedDriveFolder, error) {
+	rows, err := s.db.Query(`SELECT * FROM drive_folder_refs WHERE user_id = ? AND mailbox_email = ? ORDER BY reference_name ASC;`, userID, normalizeEmail(mailboxEmail))
 	if err != nil {
 		return nil, err
 	}
@@ -345,16 +765,16 @@ func (s *Store) ListDriveFolderRefs(userID string) ([]AllowedDriveFolder, error)
 	return out, nil
 }
 
-func (s *Store) FindDriveFolderRefByID(userID, id string) (*AllowedDriveFolder, error) {
-	row, err := s.db.QueryOne(`SELECT * FROM drive_folder_refs WHERE user_id = ? AND id = ?;`, userID, id)
+func (s *Store) FindDriveFolderRefByID(userID, mailboxEmail, id string) (*AllowedDriveFolder, error) {
+	row, err := s.db.QueryOne(`SELECT * FROM drive_folder_refs WHERE user_id = ? AND mailbox_email = ? AND id = ?;`, userID, normalizeEmail(mailboxEmail), id)
 	if err != nil {
 		return nil, err
 	}
 	return driveFolderFromRow(row), nil
 }
 
-func (s *Store) FindDriveFolderRefByKey(userID, key string) (*AllowedDriveFolder, error) {
-	row, err := s.db.QueryOne(`SELECT * FROM drive_folder_refs WHERE user_id = ? AND reference_key = ?;`, userID, strings.ToLower(strings.TrimSpace(key)))
+func (s *Store) FindDriveFolderRefByKey(userID, mailboxEmail, key string) (*AllowedDriveFolder, error) {
+	row, err := s.db.QueryOne(`SELECT * FROM drive_folder_refs WHERE user_id = ? AND mailbox_email = ? AND reference_key = ?;`, userID, normalizeEmail(mailboxEmail), strings.ToLower(strings.TrimSpace(key)))
 	if err != nil {
 		return nil, err
 	}
@@ -370,22 +790,22 @@ func (s *Store) CreateDriveFolderRef(f *AllowedDriveFolder) error {
 		f.ID = id
 	}
 	now := nowUTC()
-	return s.db.Exec(`INSERT INTO drive_folder_refs (id, user_id, reference_name, reference_key, folder_url, folder_id, folder_name, resource_key, allow_docs, allow_sheets, allow_slides, allow_drive_files, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-		f.ID, f.UserID, f.ReferenceName, f.ReferenceKey, f.FolderURL, f.FolderID, f.FolderName, f.ResourceKey, f.AllowDocs, f.AllowSheets, f.AllowSlides, f.AllowDriveFiles, now, now)
+	return s.db.Exec(`INSERT INTO drive_folder_refs (id, user_id, mailbox_email, reference_name, reference_key, folder_url, folder_id, folder_name, resource_key, allow_docs, allow_sheets, allow_slides, allow_drive_files, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+		f.ID, f.UserID, normalizeEmail(f.MailboxEmail), f.ReferenceName, f.ReferenceKey, f.FolderURL, f.FolderID, f.FolderName, f.ResourceKey, f.AllowDocs, f.AllowSheets, f.AllowSlides, f.AllowDriveFiles, now, now)
 }
 
 func (s *Store) UpdateDriveFolderRef(f *AllowedDriveFolder) error {
 	now := nowUTC()
-	return s.db.Exec(`UPDATE drive_folder_refs SET reference_name = ?, reference_key = ?, folder_url = ?, folder_id = ?, folder_name = ?, resource_key = ?, allow_docs = ?, allow_sheets = ?, allow_slides = ?, allow_drive_files = ?, updated_at = ? WHERE user_id = ? AND id = ?;`,
-		f.ReferenceName, f.ReferenceKey, f.FolderURL, f.FolderID, f.FolderName, f.ResourceKey, f.AllowDocs, f.AllowSheets, f.AllowSlides, f.AllowDriveFiles, now, f.UserID, f.ID)
+	return s.db.Exec(`UPDATE drive_folder_refs SET reference_name = ?, reference_key = ?, folder_url = ?, folder_id = ?, folder_name = ?, resource_key = ?, allow_docs = ?, allow_sheets = ?, allow_slides = ?, allow_drive_files = ?, updated_at = ? WHERE user_id = ? AND mailbox_email = ? AND id = ?;`,
+		f.ReferenceName, f.ReferenceKey, f.FolderURL, f.FolderID, f.FolderName, f.ResourceKey, f.AllowDocs, f.AllowSheets, f.AllowSlides, f.AllowDriveFiles, now, f.UserID, normalizeEmail(f.MailboxEmail), f.ID)
 }
 
-func (s *Store) DeleteDriveFolderRef(userID, id string) error {
+func (s *Store) DeleteDriveFolderRef(userID, mailboxEmail, id string) error {
 	if err := s.DeleteDriveFolderTree(userID, id); err != nil {
 		return err
 	}
-	return s.db.Exec(`DELETE FROM drive_folder_refs WHERE user_id = ? AND id = ?;`, userID, id)
+	return s.db.Exec(`DELETE FROM drive_folder_refs WHERE user_id = ? AND mailbox_email = ? AND id = ?;`, userID, normalizeEmail(mailboxEmail), id)
 }
 
 func (s *Store) ReplaceDriveFolderTree(userID, rootRefID string, entries []DriveFolderTreeEntry) error {
@@ -481,6 +901,39 @@ func sessionFromRow(row map[string]string) *Session {
 	}
 }
 
+func userSettingsFromRow(row map[string]string) *UserSettings {
+	if row == nil {
+		return nil
+	}
+	defaultPolicyID := strings.TrimSpace(row["default_policy_id"])
+	if defaultPolicyID == "" {
+		defaultPolicyID = systemPolicyID
+	}
+	return &UserSettings{
+		UserID:          row["user_id"],
+		Timezone:        row["timezone"],
+		DefaultPolicyID: defaultPolicyID,
+		CreatedAt:       parseTime(row["created_at"]),
+		UpdatedAt:       parseTime(row["updated_at"]),
+	}
+}
+
+func userPolicyFromRow(row map[string]string) *UserPolicy {
+	if row == nil {
+		return nil
+	}
+	var capabilities []string
+	_ = json.Unmarshal([]byte(row["capabilities"]), &capabilities)
+	return &UserPolicy{
+		ID:                  row["id"],
+		UserID:              row["user_id"],
+		Name:                row["name"],
+		EnabledCapabilities: validCapabilityKeys(capabilities),
+		CreatedAt:           parseTime(row["created_at"]),
+		UpdatedAt:           parseTime(row["updated_at"]),
+	}
+}
+
 func gmailConnectionFromRow(row map[string]string) *GmailConnection {
 	if row == nil {
 		return nil
@@ -488,6 +941,8 @@ func gmailConnectionFromRow(row map[string]string) *GmailConnection {
 	return &GmailConnection{
 		UserID:          row["user_id"],
 		MailboxEmail:    row["mailbox_email"],
+		FriendlyName:    row["friendly_name"],
+		PolicyID:        row["policy_id"],
 		Scopes:          row["scopes"],
 		AccessTokenEnc:  row["access_token_enc"],
 		RefreshTokenEnc: row["refresh_token_enc"],
@@ -504,6 +959,7 @@ func driveFolderFromRow(row map[string]string) *AllowedDriveFolder {
 	return &AllowedDriveFolder{
 		ID:              row["id"],
 		UserID:          row["user_id"],
+		MailboxEmail:    row["mailbox_email"],
 		ReferenceName:   row["reference_name"],
 		ReferenceKey:    row["reference_key"],
 		FolderURL:       row["folder_url"],

@@ -3,5 +3,3 @@ db/
 logs/
 notes/
 .vscode/
-.env
-.env.*

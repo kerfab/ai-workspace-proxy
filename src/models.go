@@ -24,6 +24,8 @@ type Session struct {
 type GmailConnection struct {
 	UserID          string
 	MailboxEmail    string
+	FriendlyName    string
+	PolicyID        string
 	Scopes          string
 	AccessTokenEnc  string
 	RefreshTokenEnc string
@@ -38,9 +40,27 @@ type UserDailyStat struct {
 	DeniedCount  int
 }
 
+type UserSettings struct {
+	UserID          string
+	Timezone        string
+	DefaultPolicyID string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type UserPolicy struct {
+	ID                  string
+	UserID              string
+	Name                string
+	EnabledCapabilities []string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
 type AllowedDriveFolder struct {
 	ID              string
 	UserID          string
+	MailboxEmail    string
 	ReferenceName   string
 	ReferenceKey    string
 	FolderURL       string

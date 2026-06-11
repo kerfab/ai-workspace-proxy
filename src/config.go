@@ -15,7 +15,6 @@ const (
 	defaultAppName           = "AI Workspace Proxy"
 	defaultBindAddr          = ":8080"
 	defaultDBPath            = "./db/ai_workspace_proxy.sqlite3"
-	defaultPolicyPath        = "./policy.json"
 	defaultDeniedLogPath     = "./logs/denied.log"
 	defaultSessionCookieName = "ai_workspace_proxy_session"
 	defaultSessionTTLHours   = 168
@@ -39,7 +38,6 @@ type Config struct {
 	BindAddr            string
 	BaseURL             string
 	DBPath              string
-	PolicyPath          string
 	DeniedLogPath       string
 	SessionCookieName   string
 	CookieSecure        bool
@@ -61,7 +59,6 @@ func LoadConfig() (*Config, error) {
 		BindAddr:              getenvDefault("APP_BIND_ADDR", defaultBindAddr),
 		BaseURL:               strings.TrimRight(os.Getenv("APP_BASE_URL"), "/"),
 		DBPath:                getenvDefault("DB_PATH", defaultDBPath),
-		PolicyPath:            getenvDefault("POLICY_PATH", defaultPolicyPath),
 		DeniedLogPath:         getenvDefault("DENIED_LOG_PATH", defaultDeniedLogPath),
 		SessionCookieName:     getenvDefault("SESSION_COOKIE_NAME", defaultSessionCookieName),
 		CookieSecure:          strings.EqualFold(getenvDefault("COOKIE_SECURE", "false"), "true"),

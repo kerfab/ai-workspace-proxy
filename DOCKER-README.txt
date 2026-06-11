@@ -13,7 +13,6 @@ Assumptions
 - The project contains:
   - go.mod
   - go.sum
-  - policy.json
   - src/
 
 Runtime behavior

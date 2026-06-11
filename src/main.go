@@ -31,13 +31,9 @@ func main() {
 	}
 
 	crypto := NewCrypto(cfg.EncryptionKey)
-	policy, err := LoadPolicy(cfg.PolicyPath)
-	if err != nil {
-		log.Fatalf("policy load error: %v", err)
-	}
 	deniedLogger := NewDeniedLogger(cfg.DeniedLogPath, 10*1024*1024, 5)
 
-	app := NewApp(cfg, store, crypto, policy, deniedLogger)
+	app := NewApp(cfg, store, crypto, deniedLogger)
 
 	server := &http.Server{
 		Addr:    cfg.BindAddr,
@@ -45,7 +41,6 @@ func main() {
 	}
 
 	log.Printf("%s listening on %s", cfg.AppName, cfg.BindAddr)
-	log.Printf("policy loaded from %s", cfg.PolicyPath)
 	log.Printf("proxy relays available under %s/gmail.googleapis.com/...", cfg.BaseURL)
 	log.Printf("proxy relays available under %s/calendar.googleapis.com/...", cfg.BaseURL)
 	log.Printf("proxy relays available under %s/drive.googleapis.com/...", cfg.BaseURL)

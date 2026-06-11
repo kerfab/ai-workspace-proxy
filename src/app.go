@@ -7,11 +7,14 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -25,7 +28,6 @@ type App struct {
 	cfg       *Config
 	store     *Store
 	crypto    *Crypto
-	policy    *PolicyEngine
 	deniedLog *DeniedLogger
 	client    *http.Client
 }
@@ -57,12 +59,11 @@ type relayTarget struct {
 	normalizedPath string
 }
 
-func NewApp(cfg *Config, store *Store, crypto *Crypto, policy *PolicyEngine, deniedLog *DeniedLogger) *App {
+func NewApp(cfg *Config, store *Store, crypto *Crypto, deniedLog *DeniedLogger) *App {
 	return &App{
 		cfg:       cfg,
 		store:     store,
 		crypto:    crypto,
-		policy:    policy,
 		deniedLog: deniedLog,
 		client:    &http.Client{Timeout: cfg.HTTPClientTimeout},
 	}
@@ -74,16 +75,23 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("/auth/google/login", a.handleGoogleLogin)
 	mux.HandleFunc("/auth/google/callback", a.handleGoogleCallback)
 	mux.HandleFunc("/logout", a.handleLogout)
+	mux.HandleFunc("/settings", a.handleIndex)
+	mux.HandleFunc("/settings/update", a.handleSettingsUpdate)
+	mux.HandleFunc("/policies", a.handleIndex)
+	mux.HandleFunc("/policies/save", a.handlePolicySave)
+	mux.HandleFunc("/policies/delete", a.handlePolicyDelete)
+	mux.HandleFunc("/policies/default", a.handlePolicyDefault)
 	mux.HandleFunc("/auth/workspace/connect", a.handleWorkspaceConnect)
 	mux.HandleFunc("/auth/workspace/callback", a.handleWorkspaceCallback)
 	mux.HandleFunc("/auth/workspace/disconnect", a.handleWorkspaceDisconnect)
-	mux.HandleFunc("/auth/gmail/connect", a.handleWorkspaceConnect)
-	mux.HandleFunc("/auth/gmail/callback", a.handleWorkspaceCallback)
-	mux.HandleFunc("/auth/gmail/disconnect", a.handleWorkspaceDisconnect)
+	mux.HandleFunc("/workspace/order", a.handleWorkspaceOrder)
+	mux.HandleFunc("/workspace/account/update", a.handleWorkspaceAccountUpdate)
+	mux.HandleFunc("/workspace/policy/update", a.handleWorkspacePolicyUpdate)
 	mux.HandleFunc("/workspace/drive-folders/add", a.handleAddDriveFolder)
 	mux.HandleFunc("/workspace/drive-folders/", a.handleDriveFolderRoutes)
 	mux.HandleFunc("/api/drive-folders/tree", a.handleDriveFolderTreeAPI)
 	mux.HandleFunc("/api/drive-folders/tree/refresh", a.handleRefreshDriveFolderTreeAPI)
+	mux.HandleFunc("/api/agent-skill/download", a.handleDownloadAgentSkill)
 	mux.HandleFunc("/api/token/reveal", a.handleRevealToken)
 	mux.HandleFunc("/api/token/download-config", a.handleDownloadProxyConfig)
 	mux.HandleFunc("/api/token/rotate", a.handleRotateToken)
@@ -105,7 +113,7 @@ func (a *App) workspaceScopes() []string {
 	return []string{
 		"https://www.googleapis.com/auth/gmail.modify",
 		"https://www.googleapis.com/auth/gmail.labels",
-		"https://www.googleapis.com/auth/calendar.readonly",
+		"https://www.googleapis.com/auth/calendar",
 		"https://www.googleapis.com/auth/drive",
 		"https://www.googleapis.com/auth/documents",
 		"https://www.googleapis.com/auth/spreadsheets",
@@ -113,9 +121,117 @@ func (a *App) workspaceScopes() []string {
 	}
 }
 
+func friendlyWorkspaceScopes(scopes string) []string {
+	labels := map[string]string{
+		"https://www.googleapis.com/auth/calendar":      "Google Calendar access",
+		"https://www.googleapis.com/auth/drive":         "Google Drive access",
+		"https://www.googleapis.com/auth/documents":     "Google Docs access",
+		"https://www.googleapis.com/auth/gmail.labels":  "Gmail label management",
+		"https://www.googleapis.com/auth/gmail.modify":  "Gmail message and draft management",
+		"https://www.googleapis.com/auth/presentations": "Google Slides access",
+		"https://www.googleapis.com/auth/spreadsheets":  "Google Sheets access",
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, scope := range strings.Fields(scopes) {
+		label := labels[scope]
+		if label == "" {
+			label = strings.TrimPrefix(scope, "https://www.googleapis.com/auth/")
+		}
+		if label != "" && !seen[label] {
+			seen[label] = true
+			out = append(out, label)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func formatUserTime(t time.Time, timezone string) string {
+	loc, err := time.LoadLocation(strings.TrimSpace(timezone))
+	if err != nil {
+		loc = time.UTC
+	}
+	return t.In(loc).Format("2006-01-02 15:04:05 MST")
+}
+
+func timezoneOptions(selected string) []map[string]any {
+	selected = strings.TrimSpace(selected)
+	zones := availableTimezones()
+	out := make([]map[string]any, 0, len(zones))
+	for _, zone := range zones {
+		out = append(out, map[string]any{
+			"Name":     zone,
+			"Selected": zone == selected,
+		})
+	}
+	return out
+}
+
+func availableTimezones() []string {
+	seen := map[string]bool{"UTC": true}
+	for _, path := range []string{"/usr/share/zoneinfo/zone1970.tab", "/usr/share/zoneinfo/zone.tab"} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.Split(line, "\t")
+			if len(parts) < 3 {
+				continue
+			}
+			zone := strings.TrimSpace(parts[2])
+			if zone != "" {
+				seen[zone] = true
+			}
+		}
+	}
+	if len(seen) == 1 {
+		for _, zone := range []string{
+			"Africa/Johannesburg",
+			"America/Argentina/Buenos_Aires",
+			"America/Chicago",
+			"America/Los_Angeles",
+			"America/New_York",
+			"America/Sao_Paulo",
+			"Asia/Dubai",
+			"Asia/Hong_Kong",
+			"Asia/Singapore",
+			"Asia/Tokyo",
+			"Australia/Sydney",
+			"Europe/London",
+			"Europe/Paris",
+			"Pacific/Auckland",
+		} {
+			seen[zone] = true
+		}
+	}
+	zones := make([]string, 0, len(seen))
+	for zone := range seen {
+		zones = append(zones, zone)
+	}
+	sort.Strings(zones)
+	for i, zone := range zones {
+		if zone == "UTC" {
+			copy(zones[1:i+1], zones[0:i])
+			zones[0] = "UTC"
+			break
+		}
+	}
+	return zones
+}
+
 func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET required")
+		return
+	}
+	if r.URL.Path != "/" && r.URL.Path != "/settings" && r.URL.Path != "/policies" {
+		writeError(w, http.StatusNotFound, "not_found", "page not found")
 		return
 	}
 	user, _ := a.currentUserFromSession(r)
@@ -123,35 +239,260 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		_ = loginTemplate.Execute(w, map[string]any{"AppName": a.cfg.AppName})
 		return
 	}
-	conn, _ := a.store.GetGmailConnection(user.ID)
+	settings, err := a.store.GetUserSettings(user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "settings_error", err.Error())
+		return
+	}
 	rec, _ := a.store.GetProxyTokenRecord(user.ID)
 	hint := "Token available"
 	if rec != nil && rec["token_hint"] != "" {
 		hint = rec["token_hint"]
 	}
-	connected := conn != nil
+	conns, _ := a.store.ListGmailConnections(user.ID)
+	showSettings := r.URL.Path == "/settings"
+	showPolicies := r.URL.Path == "/policies"
+	selectedWorkspace := strings.TrimSpace(r.URL.Query().Get("workspace"))
+	if showSettings || showPolicies {
+		selectedWorkspace = ""
+	}
+	showDashboard := selectedWorkspace == "" && !showSettings && !showPolicies
+	var selectedConn *GmailConnection
+	workspaceError := ""
+	if selectedWorkspace != "" {
+		selectedConn, _ = a.store.ResolveGmailConnection(user.ID, selectedWorkspace)
+		if selectedConn == nil {
+			workspaceError = "Workspace not found."
+		}
+	}
 	workspaceView := map[string]any{}
-	driveFolders, _ := a.store.ListDriveFolderRefs(user.ID)
-	if connected {
+	driveFolders := []AllowedDriveFolder{}
+	if selectedConn != nil {
 		workspaceView = map[string]any{
-			"AccountEmail":     conn.MailboxEmail,
-			"Scopes":           conn.Scopes,
-			"ConnectedSince":   conn.CreatedAt.Format(time.RFC3339),
+			"Email":            selectedConn.MailboxEmail,
+			"Name":             selectedConn.FriendlyName,
+			"Selector":         selectedConn.MailboxEmail,
+			"PolicyID":         selectedConn.PolicyID,
+			"PolicyOptions":    a.policyOptionsForUser(user.ID, selectedConn.PolicyID),
+			"Scopes":           friendlyWorkspaceScopes(selectedConn.Scopes),
+			"ConnectedSince":   formatUserTime(selectedConn.CreatedAt, settings.Timezone),
 			"ConnectionStatus": "Active",
 			"ProxyTokenStatus": "Long-lived",
 		}
+		driveFolders, _ = a.store.ListDriveFolderRefs(user.ID, selectedConn.MailboxEmail)
+	}
+	workspaceNav := make([]map[string]any, 0, len(conns))
+	for _, conn := range conns {
+		workspaceNav = append(workspaceNav, map[string]any{
+			"Email":  conn.MailboxEmail,
+			"Name":   conn.FriendlyName,
+			"Active": selectedConn != nil && conn.MailboxEmail == selectedConn.MailboxEmail,
+		})
 	}
 	_ = dashboardTemplate.Execute(w, map[string]any{
-		"AppName":            a.cfg.AppName,
-		"BaseURL":            a.cfg.BaseURL,
-		"User":               user,
-		"CSRFToken":          a.csrfTokenFromRequest(r),
-		"TokenHint":          hint,
-		"WorkspaceConnected": connected,
-		"Workspace":          workspaceView,
-		"DriveFolders":       driveFolders,
-		"FolderError":        r.URL.Query().Get("folder_error"),
+		"AppName":       a.cfg.AppName,
+		"User":          user,
+		"CSRFToken":     a.csrfTokenFromRequest(r),
+		"TokenHint":     hint,
+		"ShowDashboard": showDashboard,
+		"ShowSettings":  showSettings,
+		"ShowPolicies":  showPolicies,
+		"Settings": map[string]any{
+			"Timezone":    settings.Timezone,
+			"Timezones":   timezoneOptions(settings.Timezone),
+			"CurrentTime": formatUserTime(nowUTC(), settings.Timezone),
+		},
+		"SettingsError":        r.URL.Query().Get("settings_error"),
+		"SettingsSaved":        r.URL.Query().Get("settings_saved") == "1",
+		"PolicyEditor":         a.policyEditorView(user.ID, r),
+		"Workspaces":           workspaceNav,
+		"WorkspaceConnected":   selectedConn != nil,
+		"Workspace":            workspaceView,
+		"WorkspaceError":       workspaceError,
+		"WorkspacePolicyError": r.URL.Query().Get("workspace_policy_error"),
+		"WorkspacePolicySaved": r.URL.Query().Get("workspace_policy_saved") == "1",
+		"DriveFolders":         driveFolders,
+		"FolderError":          r.URL.Query().Get("folder_error"),
 	})
+}
+
+func (a *App) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	user := a.requireSessionUser(w, r)
+	if user == nil {
+		return
+	}
+	if !a.requireSessionCSRF(w, r) {
+		return
+	}
+	timezone := strings.TrimSpace(r.FormValue("timezone"))
+	if err := a.store.SaveUserTimezone(user.ID, timezone); err != nil {
+		http.Redirect(w, r, "/settings?settings_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, "/settings?settings_saved=1", http.StatusFound)
+}
+
+func (a *App) policyEditorView(userID string, r *http.Request) map[string]any {
+	settings, _ := a.store.GetUserSettings(userID)
+	selectedPolicyID := strings.TrimSpace(r.URL.Query().Get("policy"))
+	if selectedPolicyID == "" {
+		selectedPolicyID = settings.DefaultPolicyID
+	}
+	if selectedPolicyID == "" {
+		selectedPolicyID = systemPolicyID
+	}
+	isNew := selectedPolicyID == "new"
+	isSystem := selectedPolicyID == systemPolicyID && !isNew
+	selectedName := ""
+	selectedCapabilities := SystemDefaultCapabilityKeys()
+	selectedIsDefault := settings.DefaultPolicyID == systemPolicyID
+	if isNew {
+		selectedName = ""
+		selectedIsDefault = false
+	} else if !isSystem {
+		policy, _ := a.store.GetUserPolicy(userID, selectedPolicyID)
+		if policy == nil {
+			selectedPolicyID = systemPolicyID
+			isSystem = true
+			selectedName = systemPolicyName
+			selectedCapabilities = SystemDefaultCapabilityKeys()
+			selectedIsDefault = settings.DefaultPolicyID == systemPolicyID
+		} else {
+			selectedName = policy.Name
+			selectedCapabilities = policy.EnabledCapabilities
+			selectedIsDefault = settings.DefaultPolicyID == policy.ID
+		}
+	} else {
+		selectedName = systemPolicyName
+	}
+	selectedSet := sliceToSet(selectedCapabilities)
+	systemSet := sliceToSet(SystemDefaultCapabilityKeys())
+	selectedIsApplied := selectedIsDefault
+	if !isNew && selectedPolicyID != systemPolicyID {
+		usedByWorkspace, _ := a.store.PolicyUsedByWorkspace(userID, selectedPolicyID)
+		selectedIsApplied = selectedIsApplied || usedByWorkspace
+	}
+	return map[string]any{
+		"Options":           a.policyOptionsForUser(userID, selectedPolicyID),
+		"Capabilities":      PolicyCapabilitiesForSelection(selectedSet),
+		"SystemDefaults":    PolicyCapabilitiesForSelection(systemSet),
+		"SelectedID":        selectedPolicyID,
+		"SelectedName":      selectedName,
+		"SelectedIsSystem":  isSystem,
+		"SelectedIsNew":     isNew,
+		"SelectedIsDefault": selectedIsDefault,
+		"SelectedIsApplied": selectedIsApplied,
+		"DefaultPolicyID":   settings.DefaultPolicyID,
+		"Error":             r.URL.Query().Get("policy_error"),
+		"Saved":             r.URL.Query().Get("policy_saved") == "1",
+		"DefaultSaved":      r.URL.Query().Get("policy_default_saved") == "1",
+		"Deleted":           r.URL.Query().Get("policy_deleted"),
+	}
+}
+
+func (a *App) policyOptionsForUser(userID, selectedPolicyID string) []map[string]any {
+	settings, _ := a.store.GetUserSettings(userID)
+	selectedPolicyID = strings.TrimSpace(selectedPolicyID)
+	if selectedPolicyID == "" {
+		selectedPolicyID = systemPolicyID
+	}
+	options := []map[string]any{{
+		"ID":        systemPolicyID,
+		"Name":      systemPolicyName,
+		"Selected":  selectedPolicyID == systemPolicyID,
+		"IsDefault": settings.DefaultPolicyID == systemPolicyID,
+		"System":    true,
+	}}
+	policies, _ := a.store.ListUserPolicies(userID)
+	for _, policy := range policies {
+		options = append(options, map[string]any{
+			"ID":        policy.ID,
+			"Name":      policy.Name,
+			"Selected":  selectedPolicyID == policy.ID,
+			"IsDefault": settings.DefaultPolicyID == policy.ID,
+			"System":    false,
+		})
+	}
+	return options
+}
+
+func (a *App) handlePolicySave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	user := a.requireSessionUser(w, r)
+	if user == nil {
+		return
+	}
+	if !a.requireSessionCSRF(w, r) {
+		return
+	}
+	policyID := strings.TrimSpace(r.FormValue("policy_id"))
+	if policyID == systemPolicyID {
+		http.Redirect(w, r, "/policies?policy_error="+url.QueryEscape("system default policy cannot be modified"), http.StatusFound)
+		return
+	}
+	policy := &UserPolicy{
+		ID:                  policyID,
+		UserID:              user.ID,
+		Name:                strings.TrimSpace(r.FormValue("name")),
+		EnabledCapabilities: r.Form["capability"],
+	}
+	if err := a.store.SaveUserPolicy(policy); err != nil {
+		http.Redirect(w, r, "/policies?policy="+url.QueryEscape(policyID)+"&policy_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, "/policies?policy="+url.QueryEscape(policy.ID)+"&policy_saved=1", http.StatusFound)
+}
+
+func (a *App) handlePolicyDefault(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	user := a.requireSessionUser(w, r)
+	if user == nil {
+		return
+	}
+	if !a.requireSessionCSRF(w, r) {
+		return
+	}
+	policyID := strings.TrimSpace(r.FormValue("default_policy_id"))
+	if err := a.store.SaveDefaultPolicyID(user.ID, policyID); err != nil {
+		http.Redirect(w, r, "/policies?policy_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, "/policies?policy="+url.QueryEscape(policyID)+"&policy_default_saved=1", http.StatusFound)
+}
+
+func (a *App) handlePolicyDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	user := a.requireSessionUser(w, r)
+	if user == nil {
+		return
+	}
+	if !a.requireSessionCSRF(w, r) {
+		return
+	}
+	policyID := strings.TrimSpace(r.FormValue("policy_id"))
+	wasDefault, err := a.store.DeleteUserPolicy(user.ID, policyID)
+	if err != nil {
+		http.Redirect(w, r, "/policies?policy_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		return
+	}
+	deleted := "custom"
+	if wasDefault {
+		deleted = "default"
+	}
+	http.Redirect(w, r, "/policies?policy="+systemPolicyID+"&policy_deleted="+deleted, http.StatusFound)
 }
 
 func (a *App) handleGoogleLogin(w http.ResponseWriter, r *http.Request) {
@@ -318,23 +659,19 @@ func (a *App) handleWorkspaceCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "oauth_error", err.Error())
 		return
 	}
-	existing, _ := a.store.GetGmailConnection(user.ID)
-	refreshToken := tokenResp.RefreshToken
-	if refreshToken == "" && existing != nil {
-		refreshToken, _ = a.crypto.Decrypt(existing.RefreshTokenEnc)
-	}
-	if refreshToken == "" {
-		writeError(w, http.StatusBadGateway, "oauth_error", "Google did not return a refresh token")
-		return
-	}
 	profile, err := a.fetchGmailProfile(tokenResp.AccessToken)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "workspace_error", err.Error())
 		return
 	}
 	accountEmail := normalizeEmail(profile.EmailAddress)
-	if accountEmail != normalizeEmail(user.Email) {
-		writeError(w, http.StatusForbidden, "workspace_connect_denied", "connected Google Workspace account must match the signed-in proxy user email")
+	existing, _ := a.store.GetGmailConnection(user.ID, accountEmail)
+	refreshToken := tokenResp.RefreshToken
+	if refreshToken == "" && existing != nil {
+		refreshToken, _ = a.crypto.Decrypt(existing.RefreshTokenEnc)
+	}
+	if refreshToken == "" {
+		writeError(w, http.StatusBadGateway, "oauth_error", "Google did not return a refresh token")
 		return
 	}
 	accessEnc, err := a.crypto.Encrypt(tokenResp.AccessToken)
@@ -351,9 +688,14 @@ func (a *App) handleWorkspaceCallback(w http.ResponseWriter, r *http.Request) {
 	if scope == "" {
 		scope = strings.Join(a.workspaceScopes(), " ")
 	}
+	friendlyName := accountEmail
+	if existing != nil && strings.TrimSpace(existing.FriendlyName) != "" {
+		friendlyName = existing.FriendlyName
+	}
 	conn := &GmailConnection{
 		UserID:          user.ID,
 		MailboxEmail:    accountEmail,
+		FriendlyName:    friendlyName,
 		Scopes:          scope,
 		AccessTokenEnc:  accessEnc,
 		RefreshTokenEnc: refreshEnc,
@@ -378,11 +720,89 @@ func (a *App) handleWorkspaceDisconnect(w http.ResponseWriter, r *http.Request) 
 	if !a.requireSessionCSRF(w, r) {
 		return
 	}
-	if err := a.store.DeleteGmailConnection(user.ID); err != nil {
+	conn, err := a.resolveWorkspaceFromRequest(user.ID, r)
+	if err != nil {
+		http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		return
+	}
+	if err := a.store.DeleteGmailConnection(user.ID, conn.MailboxEmail); err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+func (a *App) handleWorkspaceAccountUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	user := a.requireSessionUser(w, r)
+	if user == nil {
+		return
+	}
+	if !a.requireSessionCSRF(w, r) {
+		return
+	}
+	conn, err := a.resolveWorkspaceFromRequest(user.ID, r)
+	if err != nil {
+		http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		return
+	}
+	friendlyName := strings.TrimSpace(r.FormValue("friendly_name"))
+	if err := a.store.UpdateGmailConnectionFriendlyName(user.ID, conn.MailboxEmail, friendlyName); err != nil {
+		http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail), http.StatusFound)
+}
+
+func (a *App) handleWorkspacePolicyUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	user := a.requireSessionUser(w, r)
+	if user == nil {
+		return
+	}
+	if !a.requireSessionCSRF(w, r) {
+		return
+	}
+	conn, err := a.resolveWorkspaceFromRequest(user.ID, r)
+	if err != nil {
+		http.Redirect(w, r, "/?workspace_policy_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		return
+	}
+	policyID := strings.TrimSpace(r.FormValue("policy_id"))
+	if err := a.store.UpdateGmailConnectionPolicy(user.ID, conn.MailboxEmail, policyID); err != nil {
+		http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&workspace_policy_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&workspace_policy_saved=1", http.StatusFound)
+}
+
+func (a *App) handleWorkspaceOrder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	user := a.requireSessionUser(w, r)
+	if user == nil {
+		return
+	}
+	if !a.requireSessionCSRF(w, r) {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_form", err.Error())
+		return
+	}
+	if err := a.store.SaveWorkspaceOrder(user.ID, r.Form["workspace"]); err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
 func (a *App) handleAddDriveFolder(w http.ResponseWriter, r *http.Request) {
@@ -397,31 +817,35 @@ func (a *App) handleAddDriveFolder(w http.ResponseWriter, r *http.Request) {
 	if !a.requireSessionCSRF(w, r) {
 		return
 	}
-	folder, err := a.buildDriveFolderRefFromRequest(user.ID, "", r)
+	conn, err := a.resolveWorkspaceFromRequest(user.ID, r)
 	if err != nil {
 		http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
 		return
 	}
-	if existing, _ := a.store.FindDriveFolderRefByKey(user.ID, folder.ReferenceKey); existing != nil {
-		http.Redirect(w, r, "/?folder_error="+url.QueryEscape("Reference Name already exists."), http.StatusFound)
+	accessToken, err := a.getValidWorkspaceAccessToken(conn)
+	if err != nil {
+		http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		return
+	}
+	folder, err := a.buildDriveFolderRefFromRequest(user.ID, conn.MailboxEmail, "", accessToken, r)
+	if err != nil {
+		http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		return
+	}
+	if existing, _ := a.store.FindDriveFolderRefByKey(user.ID, conn.MailboxEmail, folder.ReferenceKey); existing != nil {
+		http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape("Reference Name already exists."), http.StatusFound)
 		return
 	}
 	if err := a.store.CreateDriveFolderRef(folder); err != nil {
-		http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
-		return
-	}
-	accessToken, err := a.getUserWorkspaceAccessToken(user.ID)
-	if err != nil {
-		_ = a.store.DeleteDriveFolderRef(user.ID, folder.ID)
-		http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
 		return
 	}
 	if err := a.refreshDriveFolderTree(user.ID, accessToken, folder); err != nil {
-		_ = a.store.DeleteDriveFolderRef(user.ID, folder.ID)
-		http.Redirect(w, r, "/?folder_error="+url.QueryEscape("Unable to cache subfolder tree: "+err.Error()), http.StatusFound)
+		_ = a.store.DeleteDriveFolderRef(user.ID, conn.MailboxEmail, folder.ID)
+		http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape("Unable to cache subfolder tree: "+err.Error()), http.StatusFound)
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusFound)
+	http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail), http.StatusFound)
 }
 
 func (a *App) handleDriveFolderRoutes(w http.ResponseWriter, r *http.Request) {
@@ -436,6 +860,11 @@ func (a *App) handleDriveFolderRoutes(w http.ResponseWriter, r *http.Request) {
 	if !a.requireSessionCSRF(w, r) {
 		return
 	}
+	conn, err := a.resolveWorkspaceFromRequest(user.ID, r)
+	if err != nil {
+		http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		return
+	}
 	trimmed := strings.TrimPrefix(r.URL.Path, "/workspace/drive-folders/")
 	trimmed = strings.Trim(trimmed, "/")
 	parts := strings.Split(trimmed, "/")
@@ -444,58 +873,58 @@ func (a *App) handleDriveFolderRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, action := parts[0], parts[1]
-	current, err := a.store.FindDriveFolderRefByID(user.ID, id)
+	current, err := a.store.FindDriveFolderRefByID(user.ID, conn.MailboxEmail, id)
 	if err != nil || current == nil {
-		http.Redirect(w, r, "/?folder_error="+url.QueryEscape("Allowed folder not found."), http.StatusFound)
+		http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape("Allowed folder not found."), http.StatusFound)
 		return
 	}
 	switch action {
 	case "update":
-		folder, err := a.buildDriveFolderRefFromRequest(user.ID, id, r)
+		accessToken, err := a.getValidWorkspaceAccessToken(conn)
 		if err != nil {
-			http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
 			return
 		}
-		if existing, _ := a.store.FindDriveFolderRefByKey(user.ID, folder.ReferenceKey); existing != nil && existing.ID != id {
-			http.Redirect(w, r, "/?folder_error="+url.QueryEscape("Reference Name already exists."), http.StatusFound)
+		folder, err := a.buildDriveFolderRefFromRequest(user.ID, conn.MailboxEmail, id, accessToken, r)
+		if err != nil {
+			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+			return
+		}
+		if existing, _ := a.store.FindDriveFolderRefByKey(user.ID, conn.MailboxEmail, folder.ReferenceKey); existing != nil && existing.ID != id {
+			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape("Reference Name already exists."), http.StatusFound)
 			return
 		}
 		if err := a.store.UpdateDriveFolderRef(folder); err != nil {
-			http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
-			return
-		}
-		accessToken, err := a.getUserWorkspaceAccessToken(user.ID)
-		if err != nil {
-			http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
 			return
 		}
 		if err := a.refreshDriveFolderTree(user.ID, accessToken, folder); err != nil {
-			http.Redirect(w, r, "/?folder_error="+url.QueryEscape("Unable to refresh subfolder tree: "+err.Error()), http.StatusFound)
+			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape("Unable to refresh subfolder tree: "+err.Error()), http.StatusFound)
 			return
 		}
 	case "refresh":
-		accessToken, err := a.getUserWorkspaceAccessToken(user.ID)
+		accessToken, err := a.getValidWorkspaceAccessToken(conn)
 		if err != nil {
-			http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
 			return
 		}
 		if err := a.refreshDriveFolderTree(user.ID, accessToken, current); err != nil {
-			http.Redirect(w, r, "/?folder_error="+url.QueryEscape("Unable to refresh subfolder tree: "+err.Error()), http.StatusFound)
+			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape("Unable to refresh subfolder tree: "+err.Error()), http.StatusFound)
 			return
 		}
 	case "delete":
-		if err := a.store.DeleteDriveFolderRef(user.ID, id); err != nil {
-			http.Redirect(w, r, "/?folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		if err := a.store.DeleteDriveFolderRef(user.ID, conn.MailboxEmail, id); err != nil {
+			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
 			return
 		}
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "folder action not found")
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusFound)
+	http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail), http.StatusFound)
 }
 
-func (a *App) buildDriveFolderRefFromRequest(userID, existingID string, r *http.Request) (*AllowedDriveFolder, error) {
+func (a *App) buildDriveFolderRefFromRequest(userID, mailboxEmail, existingID, accessToken string, r *http.Request) (*AllowedDriveFolder, error) {
 	if err := r.ParseForm(); err != nil {
 		return nil, fmt.Errorf("invalid form: %w", err)
 	}
@@ -518,30 +947,18 @@ func (a *App) buildDriveFolderRefFromRequest(userID, existingID string, r *http.
 	if err != nil {
 		return nil, err
 	}
-	conn, err := a.store.GetGmailConnection(userID)
-	if err != nil || conn == nil {
-		return nil, fmt.Errorf("Connect Google Workspace before configuring allowed Drive folders")
-	}
-	accessToken, err := a.getValidWorkspaceAccessToken(conn)
-	if err != nil {
-		return nil, err
-	}
 	meta, err := a.fetchDriveFileMetadata(accessToken, folderID, resourceKey)
 	if err != nil {
+		var driveErr *driveAPIError
+		if errors.As(err, &driveErr) && driveErr.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("Unable to access folder with Workspace account %s. Make sure the folder is shared with that account, or select the Workspace account that can open the folder link", mailboxEmail)
+		}
 		return nil, fmt.Errorf("Unable to access folder: %w", err)
 	}
 	if meta.MimeType != mimeTypeFolder {
 		return nil, fmt.Errorf("The provided link does not point to a Google Drive folder")
 	}
-	return &AllowedDriveFolder{ID: existingID, UserID: userID, ReferenceName: referenceName, ReferenceKey: normalizeReferenceKey(referenceName), FolderURL: folderLink, FolderID: folderID, FolderName: meta.Name, ResourceKey: resourceKey, AllowDocs: allowDocs, AllowSheets: allowSheets, AllowSlides: allowSlides, AllowDriveFiles: allowDrive}, nil
-}
-
-func (a *App) getUserWorkspaceAccessToken(userID string) (string, error) {
-	conn, err := a.store.GetGmailConnection(userID)
-	if err != nil || conn == nil {
-		return "", fmt.Errorf("Connect Google Workspace before configuring allowed Drive folders")
-	}
-	return a.getValidWorkspaceAccessToken(conn)
+	return &AllowedDriveFolder{ID: existingID, UserID: userID, MailboxEmail: normalizeEmail(mailboxEmail), ReferenceName: referenceName, ReferenceKey: normalizeReferenceKey(referenceName), FolderURL: folderLink, FolderID: folderID, FolderName: meta.Name, ResourceKey: resourceKey, AllowDocs: allowDocs, AllowSheets: allowSheets, AllowSlides: allowSlides, AllowDriveFiles: allowDrive}, nil
 }
 
 func (a *App) handleRevealToken(w http.ResponseWriter, r *http.Request) {
@@ -581,12 +998,25 @@ func (a *App) handleDownloadProxyConfig(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "token_error", err.Error())
 		return
 	}
+	conns, err := a.store.ListGmailConnections(user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
+		return
+	}
+	workspaces := make([]map[string]string, 0, len(conns))
+	for _, conn := range conns {
+		workspaces = append(workspaces, map[string]string{
+			"email": conn.MailboxEmail,
+			"name":  conn.FriendlyName,
+		})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", `attachment; filename="ai-workspace-proxy.json"`)
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"proxy_url":   a.cfg.BaseURL,
 		"proxy_token": raw,
+		"workspaces":  workspaces,
 	})
 }
 
@@ -605,9 +1035,9 @@ func (a *App) handleDriveFolderTreeAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = a.store.TouchProxyTokenUsage(user.ID)
-	conn, err := a.store.GetGmailConnection(user.ID)
-	if err != nil || conn == nil {
-		writeError(w, http.StatusForbidden, "workspace_not_connected", "user has not connected Google Workspace")
+	conn, err := a.resolveWorkspaceFromQuery(user.ID, r)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "workspace_not_found", err.Error())
 		return
 	}
 	accessToken, err := a.getValidWorkspaceAccessToken(conn)
@@ -617,7 +1047,7 @@ func (a *App) handleDriveFolderTreeAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	refName := r.URL.Query().Get("driveRef")
-	folders, selectedRef, err := a.resolveReferenceFolders(user.ID, refName)
+	folders, selectedRef, err := a.resolveReferenceFolders(user.ID, conn.MailboxEmail, refName)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "request_denied", err.Error())
 		return
@@ -679,9 +1109,9 @@ func (a *App) handleRefreshDriveFolderTreeAPI(w http.ResponseWriter, r *http.Req
 		return
 	}
 	_ = a.store.TouchProxyTokenUsage(user.ID)
-	conn, err := a.store.GetGmailConnection(user.ID)
-	if err != nil || conn == nil {
-		writeError(w, http.StatusForbidden, "workspace_not_connected", "user has not connected Google Workspace")
+	conn, err := a.resolveWorkspaceFromQuery(user.ID, r)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "workspace_not_found", err.Error())
 		return
 	}
 	accessToken, err := a.getValidWorkspaceAccessToken(conn)
@@ -691,7 +1121,7 @@ func (a *App) handleRefreshDriveFolderTreeAPI(w http.ResponseWriter, r *http.Req
 	}
 
 	refName := r.URL.Query().Get("driveRef")
-	folders, selectedRef, err := a.resolveReferenceFolders(user.ID, refName)
+	folders, selectedRef, err := a.resolveReferenceFolders(user.ID, conn.MailboxEmail, refName)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "request_denied", err.Error())
 		return
@@ -733,6 +1163,18 @@ func (a *App) currentUserFromProxyBearer(r *http.Request) (*User, error) {
 		return nil, nil
 	}
 	return a.store.FindUserByProxyToken(a.crypto, proxyToken)
+}
+
+func (a *App) policyEngineForWorkspace(userID, mailboxEmail string) (*PolicyEngine, string, error) {
+	capabilities, policyID, err := a.store.WorkspacePolicyCapabilities(userID, mailboxEmail)
+	if err != nil {
+		return nil, "", err
+	}
+	engine, err := NewPolicyEngine(capabilities)
+	if err != nil {
+		return nil, "", err
+	}
+	return engine, policyID, nil
 }
 
 func (a *App) rotateProxyToken(userID string) error {
@@ -782,7 +1224,6 @@ func (a *App) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		"Admin":         admin,
 		"CSRFToken":     a.csrfTokenFromRequest(r),
 		"Users":         users,
-		"PolicyPath":    a.cfg.PolicyPath,
 		"DeniedLogPath": a.cfg.DeniedLogPath,
 	})
 }
@@ -812,12 +1253,18 @@ func (a *App) handleAdminUserRoutes(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "db_error", err.Error())
 			return
 		}
+		settings, err := a.store.GetUserSettings(admin.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "settings_error", err.Error())
+			return
+		}
 		_ = adminUserTemplate.Execute(w, map[string]any{
-			"AppName":   a.cfg.AppName,
-			"Admin":     admin,
-			"CSRFToken": a.csrfTokenFromRequest(r),
-			"User":      target,
-			"Stats":     stats,
+			"AppName":            a.cfg.AppName,
+			"Admin":              admin,
+			"CSRFToken":          a.csrfTokenFromRequest(r),
+			"User":               target,
+			"UserCreatedAtLocal": formatUserTime(target.CreatedAt, settings.Timezone),
+			"Stats":              stats,
 		})
 		return
 	}
@@ -871,9 +1318,9 @@ func (a *App) handleProxyRelay(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = a.store.TouchProxyTokenUsage(user.ID)
 
-	conn, err := a.store.GetGmailConnection(user.ID)
-	if err != nil || conn == nil {
-		writeError(w, http.StatusForbidden, "workspace_not_connected", "user has not connected Google Workspace")
+	conn, err := a.resolveWorkspaceFromQuery(user.ID, r)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "workspace_not_found", err.Error())
 		return
 	}
 
@@ -901,7 +1348,9 @@ func (a *App) handleProxyRelay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, rawQuery, postMoveFolderID, err := a.rewriteWorkspaceRequest(user.ID, accessToken, r.Method, target, body, r.URL.Query())
+	query := r.URL.Query()
+	query.Del("workspace")
+	body, rawQuery, postMoveFolderID, err := a.rewriteWorkspaceRequest(user.ID, conn.MailboxEmail, accessToken, r.Method, target, body, query)
 	if err != nil {
 		_ = a.store.IncrementDailyStat(user.ID, false)
 		a.logDeniedRequest(r, user, conn.MailboxEmail, body, err.Error())
@@ -909,14 +1358,19 @@ func (a *App) handleProxyRelay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allowed, reason, err := a.policy.Evaluate(r.Method, target.normalizedPath, body)
+	policyEngine, policyID, err := a.policyEngineForWorkspace(user.ID, conn.MailboxEmail)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "policy_error", err.Error())
+		return
+	}
+	allowed, reason, err := policyEngine.Evaluate(r.Method, target.normalizedPath, body)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "policy_error", err.Error())
 		return
 	}
 	if !allowed {
 		_ = a.store.IncrementDailyStat(user.ID, false)
-		a.logDeniedRequest(r, user, conn.MailboxEmail, body, reason)
+		a.logDeniedRequest(r, user, conn.MailboxEmail, body, "policy "+policyID+": "+reason)
 		writeError(w, http.StatusForbidden, "request_denied", reason)
 		return
 	}
@@ -1009,6 +1463,25 @@ func (a *App) requireSessionCSRF(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	return true
+}
+
+func (a *App) resolveWorkspaceFromRequest(userID string, r *http.Request) (*GmailConnection, error) {
+	workspace := strings.TrimSpace(r.FormValue("workspace"))
+	if workspace == "" {
+		workspace = strings.TrimSpace(r.URL.Query().Get("workspace"))
+	}
+	if workspace == "" {
+		return nil, fmt.Errorf("workspace is required")
+	}
+	return a.store.ResolveGmailConnection(userID, workspace)
+}
+
+func (a *App) resolveWorkspaceFromQuery(userID string, r *http.Request) (*GmailConnection, error) {
+	workspace := strings.TrimSpace(r.URL.Query().Get("workspace"))
+	if workspace == "" {
+		return nil, fmt.Errorf("workspace is required")
+	}
+	return a.store.ResolveGmailConnection(userID, workspace)
 }
 
 func (a *App) requireAdminUser(w http.ResponseWriter, r *http.Request) *User {
@@ -1162,6 +1635,15 @@ type driveFileMetadata struct {
 	Trashed     bool     `json:"trashed"`
 }
 
+type driveAPIError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *driveAPIError) Error() string {
+	return fmt.Sprintf("drive metadata returned %d: %s", e.StatusCode, e.Body)
+}
+
 func normalizeReferenceKey(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
@@ -1172,6 +1654,9 @@ func parseDriveFolderLink(raw string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid folder link")
 	}
 	resourceKey := u.Query().Get("resourcekey")
+	if resourceKey == "" {
+		resourceKey = u.Query().Get("resourceKey")
+	}
 	re := regexp.MustCompile(`/folders/([a-zA-Z0-9_-]+)`)
 	if m := re.FindStringSubmatch(u.Path); len(m) == 2 {
 		return m[1], resourceKey, nil
@@ -1244,7 +1729,7 @@ func (a *App) fetchDriveFileMetadata(accessToken, fileID, resourceKey string) (*
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("drive metadata returned %d: %s", resp.StatusCode, string(raw))
+		return nil, &driveAPIError{StatusCode: resp.StatusCode, Body: string(raw)}
 	}
 	var out driveFileMetadata
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -1509,8 +1994,8 @@ func extractPrimaryIDFromPath(path, prefix string) string {
 	return ""
 }
 
-func (a *App) resolveReferenceFolders(userID string, refName string) ([]AllowedDriveFolder, *AllowedDriveFolder, error) {
-	folders, err := a.store.ListDriveFolderRefs(userID)
+func (a *App) resolveReferenceFolders(userID, mailboxEmail string, refName string) ([]AllowedDriveFolder, *AllowedDriveFolder, error) {
+	folders, err := a.store.ListDriveFolderRefs(userID, mailboxEmail)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1545,14 +2030,14 @@ func mustJSON(v any) []byte {
 	return b
 }
 
-func (a *App) rewriteWorkspaceRequest(userID, accessToken, method string, target relayTarget, body []byte, query url.Values) ([]byte, string, string, error) {
+func (a *App) rewriteWorkspaceRequest(userID, mailboxEmail, accessToken, method string, target relayTarget, body []byte, query url.Values) ([]byte, string, string, error) {
 	refName := query.Get("driveRef")
 	drivePath := query.Get("drivePath")
 	driveFolderID := query.Get("driveFolderId")
 	query.Del("driveRef")
 	query.Del("drivePath")
 	query.Del("driveFolderId")
-	selectedFolders, selectedRef, err := a.resolveReferenceFolders(userID, refName)
+	selectedFolders, selectedRef, err := a.resolveReferenceFolders(userID, mailboxEmail, refName)
 	if err != nil && target.serviceLabel != "gmail" && target.serviceLabel != "calendar" {
 		return body, "", "", err
 	}

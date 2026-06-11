@@ -3,6 +3,7 @@ import argparse
 import base64
 import json
 import mimetypes
+import os
 import sys
 from email.message import EmailMessage
 from pathlib import Path
@@ -11,8 +12,19 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
-CONFIG_PATH = Path.home() / ".openclaw" / "configs" / "ai-workspace-proxy.json"
+PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+LOCAL_CONFIG_PATH = PACKAGE_ROOT / "config" / "config.json"
+LEGACY_CONFIG_PATH = Path.home() / ".openclaw" / "configs" / "ai-workspace-proxy.json"
 ACTIVE_WORKSPACE = ""
+
+
+def config_path() -> Path:
+    env_path = os.environ.get("AI_WORKSPACE_PROXY_CONFIG", "").strip()
+    if env_path:
+        return Path(env_path)
+    if LOCAL_CONFIG_PATH.exists():
+        return LOCAL_CONFIG_PATH
+    return LEGACY_CONFIG_PATH
 
 
 def die(msg: str, code: int = 1):
@@ -21,12 +33,13 @@ def die(msg: str, code: int = 1):
 
 
 def load_config():
-    if not CONFIG_PATH.exists():
-        die(f"Missing config file: {CONFIG_PATH}")
+    path = config_path()
+    if not path.exists():
+        die(f"Missing config file: {path}")
     try:
-        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except Exception as e:
-        die(f"Invalid JSON in {CONFIG_PATH}: {e}")
+        die(f"Invalid JSON in {path}: {e}")
     proxy_url = str(data.get("proxy_url", "")).rstrip("/")
     proxy_token = str(data.get("proxy_token", "")).strip()
     if not proxy_url:
@@ -107,6 +120,58 @@ def request_bytes(method: str, path: str, token: str, query: Optional[Dict[str, 
         die(f"Proxy/Workspace HTTP {e.code}: {detail}", 2)
     except URLError as e:
         die(f"Connection error: {e}", 2)
+
+
+def request_raw(method: str, path: str, token: str, body: Any = None, query: Optional[Dict[str, Any]] = None) -> bytes:
+    proxy_url, _, _ = load_config()
+    url = proxy_url + path
+    query = dict(query or {})
+    if ACTIVE_WORKSPACE:
+        query.setdefault("workspace", ACTIVE_WORKSPACE)
+    if query:
+        qs = urlencode(query, doseq=True)
+        if qs:
+            url += "?" + qs
+    payload = None
+    headers = {"Authorization": f"Bearer {token}", "Accept": "*/*"}
+    if body is not None:
+        payload = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = Request(url, data=payload, method=method.upper())
+    for k, v in headers.items():
+        req.add_header(k, v)
+    try:
+        with urlopen(req) as resp:
+            return resp.read()
+    except HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        die(f"Proxy/Workspace HTTP {e.code}: {detail}", 2)
+    except URLError as e:
+        die(f"Connection error: {e}", 2)
+
+
+def parse_query_pairs(pairs: List[str]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for pair in pairs:
+        if "=" not in pair:
+            die(f"Invalid query pair {pair!r}; expected KEY=VALUE")
+        key, value = pair.split("=", 1)
+        if key in out:
+            existing = out[key]
+            if isinstance(existing, list):
+                existing.append(value)
+            else:
+                out[key] = [existing, value]
+        else:
+            out[key] = value
+    return out
+
+
+def save_bytes(data: bytes, save_to: str) -> Dict[str, Any]:
+    out = Path(save_to)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(data)
+    return {"savedTo": str(out), "size": len(data)}
 
 
 def b64url_encode(data: bytes) -> str:
@@ -587,6 +652,18 @@ def build_parser():
     p.add_argument("--presentation-id", required=True)
     p.add_argument("--requests-file", required=True)
 
+    # Proxy
+    proxy = top.add_parser("proxy", help="Proxy utility and exhaustive low-level requests")
+    psub = proxy.add_subparsers(dest="cmd", required=True)
+    p = psub.add_parser("request", help="Call any exposed proxy endpoint path")
+    p.add_argument("--method", required=True, help="HTTP method such as GET, POST, PATCH, PUT, DELETE")
+    p.add_argument("--path", required=True, help="Proxy path such as /gmail.googleapis.com/gmail/v1/users/me/messages")
+    p.add_argument("--query", action="append", default=[], help="Query parameter as KEY=VALUE; can be repeated")
+    p.add_argument("--body-file", default="", help="JSON request body file")
+    p.add_argument("--save-to", default="", help="Write raw response bytes to this file instead of printing JSON/text")
+    p = psub.add_parser("download-skill", help="Download a fresh agent skill zip from the proxy; no --workspace value is needed")
+    p.add_argument("--save-to", required=True, help="Local path where the downloaded zip file must be written")
+
     return parser
 
 
@@ -596,7 +673,8 @@ def main():
     args = parser.parse_args()
     _, token, default_workspace = load_config()
     ACTIVE_WORKSPACE = (args.workspace or default_workspace).strip()
-    if not ACTIVE_WORKSPACE:
+    workspace_optional = args.product == "proxy" and args.cmd == "download-skill"
+    if not ACTIVE_WORKSPACE and not workspace_optional:
         die("A workspace is required. Pass --workspace NAME_OR_EMAIL, or use a config with exactly one workspace.")
 
     if args.product == "gmail":
@@ -708,6 +786,25 @@ def main():
             out = slides_update(token, args.presentation_id, args.requests_file)
         else:
             die("Unknown slides command")
+
+    elif args.product == "proxy":
+        if args.cmd == "request":
+            body = read_json_file(args.body_file) if args.body_file else None
+            raw = request_raw(args.method, args.path, token, body=body, query=parse_query_pairs(args.query))
+            if args.save_to:
+                out = save_bytes(raw, args.save_to)
+            else:
+                text = raw.decode("utf-8", errors="replace")
+                try:
+                    out = json.loads(text) if text.strip() else {}
+                except json.JSONDecodeError:
+                    print(text)
+                    return
+        elif args.cmd == "download-skill":
+            raw = request_raw("GET", "/api/agent-skill/download", token)
+            out = save_bytes(raw, args.save_to)
+        else:
+            die("Unknown proxy command")
 
     else:
         die("Unknown product")

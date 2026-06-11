@@ -7,9 +7,11 @@ This folder contains an example OpenClaw skill that can be installed locally so 
 
 The purpose of this example is to show how an AI agent can access selected Google Workspace services through the proxy, instead of calling Google APIs directly.
 
+The proxy dashboard can also generate a configured skill zip with the "Download agent skill" button. That package includes the proxy config, the current helper script, and policy-filtered per-workspace instruction files. Prefer the dashboard-generated package for real usage; this folder remains a static example.
+
 Why use the proxy
 -----------------
-The proxy holds the Google Workspace credentials server-side and enforces a strict allowlist of permitted HTTP operations through `policy.json`.
+The proxy holds the Google Workspace credentials server-side and enforces a strict allowlist of permitted HTTP operations through the user's selected dashboard policy.
 
 This means the AI agent does not receive direct Google OAuth credentials and cannot perform operations outside the subset of actions that the proxy explicitly allows.
 
@@ -105,8 +107,8 @@ If the skill does not appear or is not used:
 Notes
 -----
 - This folder is only an example integration for OpenClaw.
-- The exact capabilities available to the skill depend on the current `policy.json` used by the proxy.
-- If the proxy's `policy.json` changes significantly, you may want to update the skill instructions in `SKILL.md` so they stay aligned.
+- The exact capabilities available to the skill depend on the current proxy policy selected in the dashboard.
+- If the proxy capability model changes significantly, you may want to update the skill instructions in `SKILL.md` so they stay aligned.
 
 Purpose of this example
 -----------------------

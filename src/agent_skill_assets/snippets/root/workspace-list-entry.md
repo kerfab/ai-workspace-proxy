@@ -1,0 +1,1 @@
+- `{{WORKSPACE_NAME}}` (`{{WORKSPACE_EMAIL}}`) uses policy `{{POLICY_NAME}}`.
