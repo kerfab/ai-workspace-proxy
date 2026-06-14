@@ -13,8 +13,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
-LOCAL_CONFIG_PATH = PACKAGE_ROOT / "config" / "config.json"
-LEGACY_CONFIG_PATH = Path.home() / ".openclaw" / "configs" / "ai-workspace-proxy.json"
+LOCAL_CONFIG_PATH = PACKAGE_ROOT / "config" / "agents-workspace-api-access.config.json"
 ACTIVE_WORKSPACE = ""
 
 
@@ -22,9 +21,7 @@ def config_path() -> Path:
     env_path = os.environ.get("AI_WORKSPACE_PROXY_CONFIG", "").strip()
     if env_path:
         return Path(env_path)
-    if LOCAL_CONFIG_PATH.exists():
-        return LOCAL_CONFIG_PATH
-    return LEGACY_CONFIG_PATH
+    return LOCAL_CONFIG_PATH
 
 
 def die(msg: str, code: int = 1):
@@ -54,7 +51,10 @@ def load_config():
     default_workspace = ""
     if len(workspaces) == 1 and isinstance(workspaces[0], dict):
         default_workspace = str(workspaces[0].get("name") or workspaces[0].get("email") or "").strip()
-    return proxy_url, proxy_token, default_workspace
+    skill_platform = str(data.get("skill_platform") or "").strip().lower()
+    if skill_platform not in {"generic", "openclaw"}:
+        die("Config error: skill_platform must be generic or openclaw")
+    return proxy_url, proxy_token, default_workspace, skill_platform
 
 
 def read_json_file(path: str) -> Any:
@@ -66,7 +66,7 @@ def read_text_file(path: str) -> str:
 
 
 def request_json(method: str, path: str, token: str, body: Any = None, query: Optional[Dict[str, Any]] = None):
-    proxy_url, _, _ = load_config()
+    proxy_url, _, _, _ = load_config()
     url = proxy_url + path
     query = dict(query or {})
     if ACTIVE_WORKSPACE:
@@ -99,8 +99,42 @@ def request_json(method: str, path: str, token: str, body: Any = None, query: Op
         die(f"Connection error: {e}", 2)
 
 
+def request_json_optional(method: str, path: str, token: str, body: Any = None, query: Optional[Dict[str, Any]] = None):
+    proxy_url, _, _, _ = load_config()
+    url = proxy_url + path
+    query = dict(query or {})
+    if ACTIVE_WORKSPACE:
+        query.setdefault("workspace", ACTIVE_WORKSPACE)
+    if query:
+        qs = urlencode(query, doseq=True)
+        if qs:
+            url += "?" + qs
+
+    payload = None
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    if body is not None:
+        payload = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    req = Request(url, data=payload, method=method.upper())
+    for k, v in headers.items():
+        req.add_header(k, v)
+
+    try:
+        with urlopen(req) as resp:
+            raw = resp.read().decode("utf-8")
+            if not raw.strip():
+                return {}, ""
+            return json.loads(raw), ""
+    except HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        return None, f"HTTP {e.code}: {detail}"
+    except URLError as e:
+        return None, f"Connection error: {e}"
+
+
 def request_bytes(method: str, path: str, token: str, query: Optional[Dict[str, Any]] = None) -> bytes:
-    proxy_url, _, _ = load_config()
+    proxy_url, _, _, _ = load_config()
     url = proxy_url + path
     query = dict(query or {})
     if ACTIVE_WORKSPACE:
@@ -123,7 +157,7 @@ def request_bytes(method: str, path: str, token: str, query: Optional[Dict[str, 
 
 
 def request_raw(method: str, path: str, token: str, body: Any = None, query: Optional[Dict[str, Any]] = None) -> bytes:
-    proxy_url, _, _ = load_config()
+    proxy_url, _, _, _ = load_config()
     url = proxy_url + path
     query = dict(query or {})
     if ACTIVE_WORKSPACE:
@@ -279,6 +313,10 @@ def update_draft(token: str, draft_id: str, to_addr: str, subject: str, body: st
     return request_json("PUT", f"/gmail.googleapis.com/gmail/v1/users/me/drafts/{draft_id}", token, body={"id": draft_id, "message": {"raw": raw}})
 
 
+def delete_draft(token: str, draft_id: str):
+    return request_json("DELETE", f"/gmail.googleapis.com/gmail/v1/users/me/drafts/{draft_id}", token)
+
+
 def build_reply_raw(orig_message: dict, body: str, attach_paths: Optional[List[str]] = None) -> str:
     payload = orig_message.get("payload", {}) or {}
     headers = header_map(payload)
@@ -345,6 +383,26 @@ def patch_label(token: str, label_id: str, body: Dict[str, Any]):
 
 def delete_label(token: str, label_id: str):
     return request_json("DELETE", f"/gmail.googleapis.com/gmail/v1/users/me/labels/{label_id}", token)
+
+
+def trash_message(token: str, message_id: str):
+    return request_json("POST", f"/gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}/trash", token)
+
+
+def untrash_message(token: str, message_id: str):
+    return request_json("POST", f"/gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}/untrash", token)
+
+
+def trash_thread(token: str, thread_id: str):
+    return request_json("POST", f"/gmail.googleapis.com/gmail/v1/users/me/threads/{thread_id}/trash", token)
+
+
+def untrash_thread(token: str, thread_id: str):
+    return request_json("POST", f"/gmail.googleapis.com/gmail/v1/users/me/threads/{thread_id}/untrash", token)
+
+
+def delete_message(token: str, message_id: str):
+    return request_json("DELETE", f"/gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}", token)
 
 
 def list_calendars(token: str):
@@ -446,6 +504,60 @@ def drive_update_file(token: str, file_id: str, name: str = "", body_file: str =
     return request_json("PATCH", f"/drive.googleapis.com/drive/v3/files/{file_id}", token, body=body)
 
 
+def drive_comment_body(content: str = "", body_file: str = "", action: str = ""):
+    body: Dict[str, Any] = {}
+    if body_file:
+        extra = read_json_file(body_file)
+        if not isinstance(extra, dict):
+            die("body-file must contain a JSON object")
+        body.update(extra)
+    if content:
+        body["content"] = content
+    if action:
+        body["action"] = action
+    if not body:
+        die("comment command requires --content or --body-file")
+    return body
+
+
+def drive_create_comment(token: str, file_id: str, content: str = "", body_file: str = "", fields: str = "id,content,htmlContent,author,createdTime,modifiedTime,resolved"):
+    query = {"fields": fields}
+    body = drive_comment_body(content, body_file)
+    return request_json("POST", f"/drive.googleapis.com/drive/v3/files/{file_id}/comments", token, body=body, query=query)
+
+
+def drive_reply_comment(token: str, file_id: str, comment_id: str, content: str = "", body_file: str = "", fields: str = "id,content,htmlContent,author,createdTime,modifiedTime"):
+    query = {"fields": fields}
+    body = drive_comment_body(content, body_file)
+    return request_json("POST", f"/drive.googleapis.com/drive/v3/files/{file_id}/comments/{comment_id}/replies", token, body=body, query=query)
+
+
+def drive_resolve_comment(token: str, file_id: str, comment_id: str, content: str = "", body_file: str = "", fields: str = "id,content,htmlContent,author,createdTime,modifiedTime,action"):
+    query = {"fields": fields}
+    body = drive_comment_body(content, body_file, action="resolve")
+    return request_json("POST", f"/drive.googleapis.com/drive/v3/files/{file_id}/comments/{comment_id}/replies", token, body=body, query=query)
+
+
+def drive_update_comment(token: str, file_id: str, comment_id: str, content: str = "", body_file: str = "", fields: str = "id,content,htmlContent,author,createdTime,modifiedTime,resolved"):
+    query = {"fields": fields}
+    body = drive_comment_body(content, body_file)
+    return request_json("PATCH", f"/drive.googleapis.com/drive/v3/files/{file_id}/comments/{comment_id}", token, body=body, query=query)
+
+
+def drive_update_reply(token: str, file_id: str, comment_id: str, reply_id: str, content: str = "", body_file: str = "", fields: str = "id,content,htmlContent,author,createdTime,modifiedTime,action"):
+    query = {"fields": fields}
+    body = drive_comment_body(content, body_file)
+    return request_json("PATCH", f"/drive.googleapis.com/drive/v3/files/{file_id}/comments/{comment_id}/replies/{reply_id}", token, body=body, query=query)
+
+
+def drive_delete_comment(token: str, file_id: str, comment_id: str):
+    return request_json("DELETE", f"/drive.googleapis.com/drive/v3/files/{file_id}/comments/{comment_id}", token)
+
+
+def drive_delete_reply(token: str, file_id: str, comment_id: str, reply_id: str):
+    return request_json("DELETE", f"/drive.googleapis.com/drive/v3/files/{file_id}/comments/{comment_id}/replies/{reply_id}", token)
+
+
 def docs_create(token: str, ref: str, title: str, drive_path: str = "", drive_folder_id: str = ""):
     query = add_drive_location_query({}, ref, drive_path, drive_folder_id)
     return request_json("POST", "/docs.googleapis.com/v1/documents", token, body={"title": title}, query=query)
@@ -496,8 +608,183 @@ def slides_update(token: str, presentation_id: str, requests_file: str):
     return request_json("POST", f"/slides.googleapis.com/v1/presentations/{presentation_id}:batchUpdate", token, body=body)
 
 
+def normalize_contact_email(value: str) -> str:
+    return str(value or "").strip().lower()
+
+
+def first_value(items: Any, key: str) -> str:
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict) and str(item.get(key) or "").strip():
+                return str(item.get(key)).strip()
+    return ""
+
+
+def contact_emails(person: Dict[str, Any]) -> List[Dict[str, Any]]:
+    out = []
+    for email in person.get("emailAddresses") or []:
+        if not isinstance(email, dict):
+            continue
+        address = normalize_contact_email(email.get("value", ""))
+        if not address:
+            continue
+        metadata = email.get("metadata") if isinstance(email.get("metadata"), dict) else {}
+        out.append({
+            "address": address,
+            "type": str(email.get("type") or "").strip(),
+            "primary": bool(metadata.get("primary")),
+        })
+    return out
+
+
+def contact_primary_email(emails: List[Dict[str, Any]]) -> str:
+    for email in emails:
+        if email.get("primary") and email.get("address"):
+            return str(email["address"])
+    if len(emails) == 1:
+        return str(emails[0]["address"])
+    return ""
+
+
+def normalize_contact_candidate(person: Dict[str, Any], source: str, query: str) -> Optional[Dict[str, Any]]:
+    emails = contact_emails(person)
+    if not emails:
+        return None
+    names = person.get("names") if isinstance(person.get("names"), list) else []
+    orgs = person.get("organizations") if isinstance(person.get("organizations"), list) else []
+    display_name = first_value(names, "displayName")
+    given_name = first_value(names, "givenName")
+    family_name = first_value(names, "familyName")
+    org_name = first_value(orgs, "name")
+    title = first_value(orgs, "title")
+    primary_email = contact_primary_email(emails)
+    query_norm = query.strip().lower()
+    haystacks = [display_name.lower(), given_name.lower(), family_name.lower(), primary_email.lower()]
+    reasons = []
+    confidence = {"contacts": 0.82, "directory": 0.78, "other_contacts": 0.68}.get(source, 0.6)
+    if query_norm:
+        if query_norm in [primary_email.lower(), display_name.lower()]:
+            confidence += 0.16
+            reasons.append("exact_match")
+        elif any(value.startswith(query_norm) for value in haystacks if value):
+            confidence += 0.1
+            reasons.append("prefix_match")
+        elif any(query_norm in value for value in haystacks if value):
+            confidence += 0.05
+            reasons.append("partial_match")
+    return {
+        "display_name": display_name or primary_email,
+        "given_name": given_name,
+        "family_name": family_name,
+        "emails": emails,
+        "primary_email": primary_email,
+        "organization": org_name,
+        "title": title,
+        "sources": [source],
+        "resource_names": [str(person.get("resourceName") or "").strip()] if person.get("resourceName") else [],
+        "confidence": min(round(confidence, 2), 0.99),
+        "match_reasons": reasons or ["source_match"],
+    }
+
+
+def merge_contact_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    for candidate in candidates:
+        key = contact_primary_email(candidate.get("emails", []))
+        if not key:
+            continue
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = candidate
+            continue
+        existing["sources"] = sorted(set(existing.get("sources", []) + candidate.get("sources", [])))
+        existing["resource_names"] = sorted(set(existing.get("resource_names", []) + candidate.get("resource_names", [])))
+        existing["match_reasons"] = sorted(set(existing.get("match_reasons", []) + candidate.get("match_reasons", [])))
+        existing["confidence"] = max(existing.get("confidence", 0), candidate.get("confidence", 0))
+        for field in ["display_name", "given_name", "family_name", "organization", "title", "primary_email"]:
+            if not existing.get(field) and candidate.get(field):
+                existing[field] = candidate[field]
+    return sorted(merged.values(), key=lambda item: (-float(item.get("confidence", 0)), str(item.get("display_name") or ""), str(item.get("primary_email") or "")))
+
+
+def contact_people_from_response(payload: Dict[str, Any], directory: bool = False) -> List[Dict[str, Any]]:
+    if directory:
+        people = payload.get("people")
+        return people if isinstance(people, list) else []
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return []
+    out = []
+    for result in results:
+        if isinstance(result, dict) and isinstance(result.get("person"), dict):
+            out.append(result["person"])
+    return out
+
+
+def contacts_resolve(token: str, query: str, max_results: int = 10):
+    query = query.strip()
+    if not query:
+        die("contacts resolve requires a non-empty --query")
+    page_size = max(1, min(int(max_results or 10), 30))
+    read_mask = "names,emailAddresses,organizations,metadata"
+    sources = [
+        ("directory", "/people.googleapis.com/v1/people:searchDirectoryPeople", {
+            "query": query,
+            "pageSize": page_size,
+            "readMask": read_mask,
+            "sources": ["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE", "DIRECTORY_SOURCE_TYPE_DOMAIN_CONTACT"],
+        }, True),
+        ("contacts", "/people.googleapis.com/v1/people:searchContacts", {
+            "query": query,
+            "pageSize": page_size,
+            "readMask": read_mask,
+        }, False),
+        ("other_contacts", "/people.googleapis.com/v1/otherContacts:search", {
+            "query": query,
+            "pageSize": page_size,
+            "readMask": "names,emailAddresses,metadata",
+        }, False),
+    ]
+    candidates = []
+    errors = []
+    for source, path, params, directory in sources:
+        if source in {"contacts", "other_contacts"}:
+            warmup_params = dict(params)
+            warmup_params["query"] = ""
+            request_json_optional("GET", path, token, query=warmup_params)
+        payload, error = request_json_optional("GET", path, token, query=params)
+        if error:
+            errors.append({"source": source, "error": error})
+            continue
+        for person in contact_people_from_response(payload or {}, directory=directory):
+            candidate = normalize_contact_candidate(person, source, query)
+            if candidate is not None:
+                candidates.append(candidate)
+
+    merged = merge_contact_candidates(candidates)[:page_size]
+    status = "not_found"
+    if len(merged) == 1:
+        status = "needs_confirmation"
+        if len(merged[0].get("emails", [])) > 1 and not merged[0].get("primary_email"):
+            status = "needs_email_choice"
+    elif len(merged) > 1:
+        status = "ambiguous"
+    return {
+        "status": status,
+        "query": query,
+        "candidates": merged,
+        "errors": errors,
+    }
+
+
 def build_parser():
-    parser = argparse.ArgumentParser(description="AI Workspace Proxy helper for OpenClaw")
+    parser = argparse.ArgumentParser(
+        description="AI Workspace Proxy helper for AI agent skills",
+        epilog=(
+            "Use product commands such as gmail unread or drive search as helper mode for common workflows. "
+            "Use proxy request as full passthrough mode for any Google API request covered by the applied proxy policy."
+        ),
+    )
     parser.add_argument("--workspace", default="", help="Workspace friendly name or email address")
     top = parser.add_subparsers(dest="product", required=True)
 
@@ -533,6 +820,8 @@ def build_parser():
     p.add_argument("--cc", default="")
     p.add_argument("--bcc", default="")
     p.add_argument("--attach", action="append", default=[])
+    p = gsub.add_parser("delete-draft")
+    p.add_argument("--id", required=True)
     p = gsub.add_parser("reply-draft")
     p.add_argument("--message-id", required=True)
     p.add_argument("--body-file", required=True)
@@ -547,12 +836,59 @@ def build_parser():
     p.add_argument("--body-file", required=True)
     p = gsub.add_parser("delete-label")
     p.add_argument("--id", required=True)
+    p = gsub.add_parser("apply-label")
+    p.add_argument("--label-id", required=True)
+    p.add_argument("--message-id")
+    p.add_argument("--thread-id")
+    p = gsub.add_parser("remove-label")
+    p.add_argument("--label-id", required=True)
+    p.add_argument("--message-id")
+    p.add_argument("--thread-id")
     p = gsub.add_parser("mark-read")
+    p.add_argument("--message-id")
+    p.add_argument("--thread-id")
+    p = gsub.add_parser("mark-unread")
+    p.add_argument("--message-id")
+    p.add_argument("--thread-id")
+    p = gsub.add_parser("star")
+    p.add_argument("--message-id")
+    p.add_argument("--thread-id")
+    p = gsub.add_parser("unstar")
+    p.add_argument("--message-id")
+    p.add_argument("--thread-id")
+    p = gsub.add_parser("mark-important")
+    p.add_argument("--message-id")
+    p.add_argument("--thread-id")
+    p = gsub.add_parser("mark-not-important")
     p.add_argument("--message-id")
     p.add_argument("--thread-id")
     p = gsub.add_parser("archive")
     p.add_argument("--message-id")
     p.add_argument("--thread-id")
+    p = gsub.add_parser("unarchive")
+    p.add_argument("--message-id")
+    p.add_argument("--thread-id")
+    p = gsub.add_parser("mark-spam")
+    p.add_argument("--message-id")
+    p.add_argument("--thread-id")
+    p = gsub.add_parser("unmark-spam")
+    p.add_argument("--message-id")
+    p.add_argument("--thread-id")
+    p = gsub.add_parser("trash")
+    p.add_argument("--message-id")
+    p.add_argument("--thread-id")
+    p = gsub.add_parser("untrash")
+    p.add_argument("--message-id")
+    p.add_argument("--thread-id")
+    p = gsub.add_parser("delete-message")
+    p.add_argument("--message-id", required=True)
+
+    # Contacts
+    contacts = top.add_parser("contacts", help="Contact and directory lookup")
+    csub_contacts = contacts.add_subparsers(dest="cmd", required=True)
+    p = csub_contacts.add_parser("resolve", help="Resolve a partial name or email hint to contact candidates")
+    p.add_argument("--query", required=True)
+    p.add_argument("--max-results", type=int, default=10)
 
     # Calendar
     cal = top.add_parser("calendar", help="Calendar operations")
@@ -604,6 +940,43 @@ def build_parser():
     p.add_argument("--file-id", required=True)
     p.add_argument("--name", default="")
     p.add_argument("--body-file", default="")
+    p = dsub.add_parser("create-comment")
+    p.add_argument("--file-id", required=True)
+    p.add_argument("--content", default="")
+    p.add_argument("--body-file", default="")
+    p.add_argument("--fields", default="id,content,htmlContent,author,createdTime,modifiedTime,resolved")
+    p = dsub.add_parser("reply-comment")
+    p.add_argument("--file-id", required=True)
+    p.add_argument("--comment-id", required=True)
+    p.add_argument("--content", default="")
+    p.add_argument("--body-file", default="")
+    p.add_argument("--fields", default="id,content,htmlContent,author,createdTime,modifiedTime")
+    p = dsub.add_parser("resolve-comment")
+    p.add_argument("--file-id", required=True)
+    p.add_argument("--comment-id", required=True)
+    p.add_argument("--content", default="")
+    p.add_argument("--body-file", default="")
+    p.add_argument("--fields", default="id,content,htmlContent,author,createdTime,modifiedTime,action")
+    p = dsub.add_parser("update-comment")
+    p.add_argument("--file-id", required=True)
+    p.add_argument("--comment-id", required=True)
+    p.add_argument("--content", default="")
+    p.add_argument("--body-file", default="")
+    p.add_argument("--fields", default="id,content,htmlContent,author,createdTime,modifiedTime,resolved")
+    p = dsub.add_parser("update-reply")
+    p.add_argument("--file-id", required=True)
+    p.add_argument("--comment-id", required=True)
+    p.add_argument("--reply-id", required=True)
+    p.add_argument("--content", default="")
+    p.add_argument("--body-file", default="")
+    p.add_argument("--fields", default="id,content,htmlContent,author,createdTime,modifiedTime,action")
+    p = dsub.add_parser("delete-comment")
+    p.add_argument("--file-id", required=True)
+    p.add_argument("--comment-id", required=True)
+    p = dsub.add_parser("delete-reply")
+    p.add_argument("--file-id", required=True)
+    p.add_argument("--comment-id", required=True)
+    p.add_argument("--reply-id", required=True)
 
     # Docs
     docs = top.add_parser("docs", help="Docs operations")
@@ -653,16 +1026,17 @@ def build_parser():
     p.add_argument("--requests-file", required=True)
 
     # Proxy
-    proxy = top.add_parser("proxy", help="Proxy utility and exhaustive low-level requests")
+    proxy = top.add_parser("proxy", help="Proxy utilities and full passthrough requests")
     psub = proxy.add_subparsers(dest="cmd", required=True)
-    p = psub.add_parser("request", help="Call any exposed proxy endpoint path")
+    p = psub.add_parser("request", help="Full passthrough: call a Google API path through the proxy")
     p.add_argument("--method", required=True, help="HTTP method such as GET, POST, PATCH, PUT, DELETE")
     p.add_argument("--path", required=True, help="Proxy path such as /gmail.googleapis.com/gmail/v1/users/me/messages")
     p.add_argument("--query", action="append", default=[], help="Query parameter as KEY=VALUE; can be repeated")
     p.add_argument("--body-file", default="", help="JSON request body file")
     p.add_argument("--save-to", default="", help="Write raw response bytes to this file instead of printing JSON/text")
-    p = psub.add_parser("download-skill", help="Download a fresh agent skill zip from the proxy; no --workspace value is needed")
+    p = psub.add_parser("download-skill", help="Download a fresh AI agent skill zip from the proxy; no --workspace value is needed")
     p.add_argument("--save-to", required=True, help="Local path where the downloaded zip file must be written")
+    p.add_argument("--platform", choices=["generic", "openclaw"], default="", help="Skill platform to download; defaults to config skill_platform")
 
     return parser
 
@@ -671,7 +1045,7 @@ def main():
     global ACTIVE_WORKSPACE
     parser = build_parser()
     args = parser.parse_args()
-    _, token, default_workspace = load_config()
+    _, token, default_workspace, skill_platform = load_config()
     ACTIVE_WORKSPACE = (args.workspace or default_workspace).strip()
     workspace_optional = args.product == "proxy" and args.cmd == "download-skill"
     if not ACTIVE_WORKSPACE and not workspace_optional:
@@ -694,6 +1068,8 @@ def main():
             out = create_draft(token, args.to, args.subject, read_text_file(args.body_file), cc=args.cc, bcc=args.bcc, attach_paths=args.attach)
         elif args.cmd == "update-draft":
             out = update_draft(token, args.id, args.to, args.subject, read_text_file(args.body_file), cc=args.cc, bcc=args.bcc, attach_paths=args.attach)
+        elif args.cmd == "delete-draft":
+            out = delete_draft(token, args.id)
         elif args.cmd == "reply-draft":
             out = create_reply_draft(token, args.message_id, read_text_file(args.body_file), attach_paths=args.attach)
         elif args.cmd == "list-labels":
@@ -706,6 +1082,20 @@ def main():
             out = patch_label(token, args.id, read_json_file(args.body_file))
         elif args.cmd == "delete-label":
             out = delete_label(token, args.id)
+        elif args.cmd == "apply-label":
+            if args.message_id:
+                out = modify_message_labels(token, args.message_id, add_labels=[args.label_id])
+            elif args.thread_id:
+                out = modify_thread_labels(token, args.thread_id, add_labels=[args.label_id])
+            else:
+                die("apply-label requires --message-id or --thread-id")
+        elif args.cmd == "remove-label":
+            if args.message_id:
+                out = modify_message_labels(token, args.message_id, remove_labels=[args.label_id])
+            elif args.thread_id:
+                out = modify_thread_labels(token, args.thread_id, remove_labels=[args.label_id])
+            else:
+                die("remove-label requires --message-id or --thread-id")
         elif args.cmd == "mark-read":
             if args.message_id:
                 out = modify_message_labels(token, args.message_id, remove_labels=["UNREAD"])
@@ -713,6 +1103,41 @@ def main():
                 out = modify_thread_labels(token, args.thread_id, remove_labels=["UNREAD"])
             else:
                 die("mark-read requires --message-id or --thread-id")
+        elif args.cmd == "mark-unread":
+            if args.message_id:
+                out = modify_message_labels(token, args.message_id, add_labels=["UNREAD"])
+            elif args.thread_id:
+                out = modify_thread_labels(token, args.thread_id, add_labels=["UNREAD"])
+            else:
+                die("mark-unread requires --message-id or --thread-id")
+        elif args.cmd == "star":
+            if args.message_id:
+                out = modify_message_labels(token, args.message_id, add_labels=["STARRED"])
+            elif args.thread_id:
+                out = modify_thread_labels(token, args.thread_id, add_labels=["STARRED"])
+            else:
+                die("star requires --message-id or --thread-id")
+        elif args.cmd == "unstar":
+            if args.message_id:
+                out = modify_message_labels(token, args.message_id, remove_labels=["STARRED"])
+            elif args.thread_id:
+                out = modify_thread_labels(token, args.thread_id, remove_labels=["STARRED"])
+            else:
+                die("unstar requires --message-id or --thread-id")
+        elif args.cmd == "mark-important":
+            if args.message_id:
+                out = modify_message_labels(token, args.message_id, add_labels=["IMPORTANT"])
+            elif args.thread_id:
+                out = modify_thread_labels(token, args.thread_id, add_labels=["IMPORTANT"])
+            else:
+                die("mark-important requires --message-id or --thread-id")
+        elif args.cmd == "mark-not-important":
+            if args.message_id:
+                out = modify_message_labels(token, args.message_id, remove_labels=["IMPORTANT"])
+            elif args.thread_id:
+                out = modify_thread_labels(token, args.thread_id, remove_labels=["IMPORTANT"])
+            else:
+                die("mark-not-important requires --message-id or --thread-id")
         elif args.cmd == "archive":
             if args.message_id:
                 out = modify_message_labels(token, args.message_id, remove_labels=["INBOX"])
@@ -720,8 +1145,51 @@ def main():
                 out = modify_thread_labels(token, args.thread_id, remove_labels=["INBOX"])
             else:
                 die("archive requires --message-id or --thread-id")
+        elif args.cmd == "unarchive":
+            if args.message_id:
+                out = modify_message_labels(token, args.message_id, add_labels=["INBOX"])
+            elif args.thread_id:
+                out = modify_thread_labels(token, args.thread_id, add_labels=["INBOX"])
+            else:
+                die("unarchive requires --message-id or --thread-id")
+        elif args.cmd == "mark-spam":
+            if args.message_id:
+                out = modify_message_labels(token, args.message_id, add_labels=["SPAM"])
+            elif args.thread_id:
+                out = modify_thread_labels(token, args.thread_id, add_labels=["SPAM"])
+            else:
+                die("mark-spam requires --message-id or --thread-id")
+        elif args.cmd == "unmark-spam":
+            if args.message_id:
+                out = modify_message_labels(token, args.message_id, remove_labels=["SPAM"])
+            elif args.thread_id:
+                out = modify_thread_labels(token, args.thread_id, remove_labels=["SPAM"])
+            else:
+                die("unmark-spam requires --message-id or --thread-id")
+        elif args.cmd == "trash":
+            if args.message_id:
+                out = trash_message(token, args.message_id)
+            elif args.thread_id:
+                out = trash_thread(token, args.thread_id)
+            else:
+                die("trash requires --message-id or --thread-id")
+        elif args.cmd == "untrash":
+            if args.message_id:
+                out = untrash_message(token, args.message_id)
+            elif args.thread_id:
+                out = untrash_thread(token, args.thread_id)
+            else:
+                die("untrash requires --message-id or --thread-id")
+        elif args.cmd == "delete-message":
+            out = delete_message(token, args.message_id)
         else:
             die("Unknown gmail command")
+
+    elif args.product == "contacts":
+        if args.cmd == "resolve":
+            out = contacts_resolve(token, args.query, args.max_results)
+        else:
+            die("Unknown contacts command")
 
     elif args.product == "calendar":
         if args.cmd == "list-calendars":
@@ -752,6 +1220,20 @@ def main():
             out = drive_create_file(token, args.ref, args.name, args.mime_type, args.body_file, args.drive_path, args.drive_folder_id)
         elif args.cmd == "update-file":
             out = drive_update_file(token, args.file_id, args.name, args.body_file)
+        elif args.cmd == "create-comment":
+            out = drive_create_comment(token, args.file_id, args.content, args.body_file, args.fields)
+        elif args.cmd == "reply-comment":
+            out = drive_reply_comment(token, args.file_id, args.comment_id, args.content, args.body_file, args.fields)
+        elif args.cmd == "resolve-comment":
+            out = drive_resolve_comment(token, args.file_id, args.comment_id, args.content, args.body_file, args.fields)
+        elif args.cmd == "update-comment":
+            out = drive_update_comment(token, args.file_id, args.comment_id, args.content, args.body_file, args.fields)
+        elif args.cmd == "update-reply":
+            out = drive_update_reply(token, args.file_id, args.comment_id, args.reply_id, args.content, args.body_file, args.fields)
+        elif args.cmd == "delete-comment":
+            out = drive_delete_comment(token, args.file_id, args.comment_id)
+        elif args.cmd == "delete-reply":
+            out = drive_delete_reply(token, args.file_id, args.comment_id, args.reply_id)
         else:
             die("Unknown drive command")
 
@@ -801,7 +1283,8 @@ def main():
                     print(text)
                     return
         elif args.cmd == "download-skill":
-            raw = request_raw("GET", "/api/agent-skill/download", token)
+            platform = args.platform or skill_platform
+            raw = request_raw("GET", "/api/agent-skill/download", token, query={"platform": platform})
             out = save_bytes(raw, args.save_to)
         else:
             die("Unknown proxy command")

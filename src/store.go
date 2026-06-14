@@ -53,6 +53,15 @@ func (s *Store) Init() error {
 			updated_at TEXT NOT NULL,
 			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 		);`,
+		`CREATE TABLE IF NOT EXISTS user_backend_api_tokens (
+			user_id TEXT PRIMARY KEY,
+			token_enc TEXT NOT NULL,
+			token_hint TEXT NOT NULL,
+			last_used_at TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+		);`,
 		`CREATE TABLE IF NOT EXISTS gmail_connections (
 			user_id TEXT NOT NULL,
 			mailbox_email TEXT NOT NULL,
@@ -138,6 +147,15 @@ func (s *Store) Init() error {
 			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
 			UNIQUE(user_id, name)
 		);`,
+		`CREATE TABLE IF NOT EXISTS agent_skill_download_tokens (
+			user_id TEXT PRIMARY KEY,
+			token_hash TEXT NOT NULL UNIQUE,
+			platform TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+		);`,
 	}
 	for _, stmt := range stmts {
 		if err := s.db.Exec(stmt); err != nil {
@@ -150,6 +168,7 @@ func (s *Store) Init() error {
 		`CREATE INDEX IF NOT EXISTS idx_gmail_connections_user ON gmail_connections(user_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_workspace_order_user_sort ON workspace_order(user_id, sort_order);`,
 		`CREATE INDEX IF NOT EXISTS idx_user_policies_user ON user_policies(user_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_skill_download_tokens_hash ON agent_skill_download_tokens(token_hash);`,
 		`CREATE INDEX IF NOT EXISTS idx_drive_folder_refs_user_workspace ON drive_folder_refs(user_id, mailbox_email);`,
 		`CREATE INDEX IF NOT EXISTS idx_drive_folder_tree_root ON drive_folder_tree_cache(user_id, root_ref_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_drive_folder_tree_path ON drive_folder_tree_cache(user_id, root_ref_id, path_key);`,
@@ -238,6 +257,8 @@ func (s *Store) DeleteUser(userID string) error {
 		{`DELETE FROM sessions WHERE user_id = ?;`, []any{userID}},
 		{`DELETE FROM oauth_states WHERE user_id = ?;`, []any{userID}},
 		{`DELETE FROM proxy_tokens WHERE user_id = ?;`, []any{userID}},
+		{`DELETE FROM user_backend_api_tokens WHERE user_id = ?;`, []any{userID}},
+		{`DELETE FROM agent_skill_download_tokens WHERE user_id = ?;`, []any{userID}},
 		{`DELETE FROM workspace_order WHERE user_id = ?;`, []any{userID}},
 		{`DELETE FROM drive_folder_refs WHERE user_id = ?;`, []any{userID}},
 		{`DELETE FROM gmail_connections WHERE user_id = ?;`, []any{userID}},
@@ -320,6 +341,50 @@ func (s *Store) GetProxyTokenRecord(userID string) (map[string]string, error) {
 func (s *Store) TouchProxyTokenUsage(userID string) error {
 	now := nowUTC()
 	return s.db.Exec(`UPDATE proxy_tokens SET last_used_at = ?, updated_at = ? WHERE user_id = ?;`, now, now, userID)
+}
+
+func (s *Store) SaveUserBackendAPIToken(userID, tokenEnc, tokenHint string) error {
+	now := nowUTC()
+	return s.db.Exec(`INSERT INTO user_backend_api_tokens (user_id, token_enc, token_hint, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET
+			token_enc = excluded.token_enc,
+			token_hint = excluded.token_hint,
+			updated_at = excluded.updated_at;`,
+		userID, tokenEnc, tokenHint, now, now)
+}
+
+func (s *Store) GetUserBackendAPITokenRecord(userID string) (map[string]string, error) {
+	return s.db.QueryOne(`SELECT * FROM user_backend_api_tokens WHERE user_id = ?;`, userID)
+}
+
+func (s *Store) TouchUserBackendAPITokenUsage(userID string) error {
+	now := nowUTC()
+	return s.db.Exec(`UPDATE user_backend_api_tokens SET last_used_at = ?, updated_at = ? WHERE user_id = ?;`, now, now, userID)
+}
+
+func (s *Store) SaveAgentSkillDownloadToken(userID, tokenHash, platform string, expiresAt time.Time) error {
+	now := nowUTC()
+	return s.db.Exec(`INSERT INTO agent_skill_download_tokens (user_id, token_hash, platform, expires_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET
+			token_hash = excluded.token_hash,
+			platform = excluded.platform,
+			expires_at = excluded.expires_at,
+			updated_at = excluded.updated_at;`,
+		userID, tokenHash, platform, expiresAt, now, now)
+}
+
+func (s *Store) ConsumeAgentSkillDownloadToken(tokenHash string) (userID string, platform string, ok bool, expired bool, err error) {
+	row, err := s.db.QueryOne(`SELECT * FROM agent_skill_download_tokens WHERE token_hash = ?;`, tokenHash)
+	if err != nil || row == nil {
+		return "", "", false, false, err
+	}
+	_ = s.db.Exec(`DELETE FROM agent_skill_download_tokens WHERE token_hash = ?;`, tokenHash)
+	if parseTime(row["expires_at"]).Before(nowUTC()) {
+		return row["user_id"], row["platform"], false, true, nil
+	}
+	return row["user_id"], row["platform"], true, false, nil
 }
 
 func (s *Store) SaveGmailConnection(conn *GmailConnection) error {
@@ -633,6 +698,9 @@ func (s *Store) SaveUserPolicy(policy *UserPolicy) error {
 	if policy.Name == "" {
 		return fmt.Errorf("policy name cannot be empty")
 	}
+	if policy.ID == systemPolicyID {
+		return fmt.Errorf("system default policy cannot be modified")
+	}
 	if policy.ID == "" {
 		id, err := RandomUUID()
 		if err != nil {
@@ -721,10 +789,7 @@ func (s *Store) DefaultPolicyCapabilities(userID string) ([]string, string, erro
 		return nil, "", err
 	}
 	if policy == nil {
-		if err := s.SaveDefaultPolicyID(userID, systemPolicyID); err != nil {
-			return nil, "", err
-		}
-		return SystemDefaultCapabilityKeys(), systemPolicyID, nil
+		return nil, "", fmt.Errorf("policy not found")
 	}
 	return policy.EnabledCapabilities, policy.ID, nil
 }
@@ -1019,6 +1084,29 @@ func (s *Store) FindUserByProxyToken(crypto *Crypto, token string) (*User, error
 	}
 	for _, row := range rows {
 		enc := row["proxy_token_enc"]
+		if enc == "" {
+			continue
+		}
+		dec, err := crypto.Decrypt(enc)
+		if err != nil {
+			continue
+		}
+		if subtleEqual(dec, token) {
+			return userFromRow(row), nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *Store) FindUserByUserBackendAPIToken(crypto *Crypto, token string) (*User, error) {
+	rows, err := s.db.Query(`SELECT u.*, t.token_enc AS backend_token_enc
+		FROM user_backend_api_tokens t
+		JOIN users u ON u.id = t.user_id;`)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		enc := row["backend_token_enc"]
 		if enc == "" {
 			continue
 		}

@@ -2,4 +2,4 @@ Workspace: `{{WORKSPACE_NAME}}` (`{{WORKSPACE_EMAIL}}`)
 
 Applied policy: `{{POLICY_NAME}}`
 
-IMPORTANT: Resolve all local file, script, and Markdown relative paths from the skill root, the folder containing the top-level `SKILL.md`, not from this Markdown file's folder.
+IMPORTANT: Use `{baseDir}/` for local file, script, and Markdown paths. `{baseDir}` means the full path of the top-level AI Workspace Proxy skill folder containing `SKILL.md`.

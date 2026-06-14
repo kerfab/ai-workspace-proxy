@@ -12,6 +12,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("config error: %v", err)
 	}
+	if err := ValidatePolicyCatalog(); err != nil {
+		log.Fatalf("policy catalog error: %v", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o700); err != nil {
 		log.Fatalf("db dir error: %v", err)
 	}
@@ -42,6 +45,7 @@ func main() {
 
 	log.Printf("%s listening on %s", cfg.AppName, cfg.BindAddr)
 	log.Printf("proxy relays available under %s/gmail.googleapis.com/...", cfg.BaseURL)
+	log.Printf("proxy relays available under %s/people.googleapis.com/...", cfg.BaseURL)
 	log.Printf("proxy relays available under %s/calendar.googleapis.com/...", cfg.BaseURL)
 	log.Printf("proxy relays available under %s/drive.googleapis.com/...", cfg.BaseURL)
 	log.Printf("proxy relays available under %s/docs.googleapis.com/...", cfg.BaseURL)

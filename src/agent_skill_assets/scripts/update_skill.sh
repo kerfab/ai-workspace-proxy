@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-ZIP_PATH="${AI_WORKSPACE_PROXY_SKILL_ZIP:-/tmp/ai-workspace-proxy-skill.zip}"
+ZIP_PATH="${AI_WORKSPACE_PROXY_SKILL_ZIP:-/tmp/ai-workspace-proxy-agent-skill.zip}"
 NEW_SKILL_DIR="${AI_WORKSPACE_PROXY_NEW_SKILL_DIR:-/tmp/ai-workspace-proxy-skill}"
 
 is_skill_dir() {
@@ -9,7 +9,8 @@ is_skill_dir() {
   [ -n "$dir" ] || return 1
   [ -f "$dir/SKILL.md" ] || return 1
   [ -f "$dir/scripts/workspace_proxy_tool.py" ] || return 1
-  [ -f "$dir/config/config.json" ] || return 1
+  [ -f "$dir/scripts/bootstrap_skill.sh" ] || return 1
+  [ -f "$dir/config/agents-workspace-api-access.config.json" ] || return 1
   grep -q '^# AI Workspace Proxy$' "$dir/SKILL.md"
 }
 
@@ -87,10 +88,14 @@ unzip -q "$ZIP_PATH" -d "$NEW_SKILL_DIR"
 test -f "$NEW_SKILL_DIR/SKILL.md"
 test -f "$NEW_SKILL_DIR/scripts/workspace_proxy_tool.py"
 test -f "$NEW_SKILL_DIR/scripts/update_skill.sh"
-test -f "$NEW_SKILL_DIR/config/config.json"
+test -f "$NEW_SKILL_DIR/scripts/install_skill.sh"
+test -f "$NEW_SKILL_DIR/scripts/bootstrap_skill.sh"
+test -f "$NEW_SKILL_DIR/config/agents-workspace-api-access.config.json"
 
 find "$SKILL_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 cp -a "$NEW_SKILL_DIR"/. "$SKILL_DIR"/
+
+sh "$SKILL_DIR/scripts/bootstrap_skill.sh"
 
 rm -rf "$ZIP_PATH" "$NEW_SKILL_DIR"
 

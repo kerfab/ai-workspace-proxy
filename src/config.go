@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -26,6 +25,7 @@ const (
 	googleUserInfoURL = "https://openidconnect.googleapis.com/v1/userinfo"
 	gmailProfileURL   = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 	gmailAPIBase      = "https://gmail.googleapis.com"
+	peopleAPIBase     = "https://people.googleapis.com"
 	calendarAPIBase   = "https://www.googleapis.com"
 	driveAPIBase      = "https://www.googleapis.com"
 	docsAPIBase       = "https://docs.googleapis.com"
@@ -152,25 +152,24 @@ func parseEncryptionKey(raw string) ([]byte, error) {
 	if len(raw) == 32 {
 		return []byte(raw), nil
 	}
-	sum := sha256.Sum256([]byte(raw))
-	return sum[:], nil
+	return nil, fmt.Errorf("must be 32 raw bytes, 64 hex characters, or base64 for exactly 32 bytes")
 }
 
-func getenvDefault(key, fallback string) string {
+func getenvDefault(key, defaultValue string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
-	return fallback
+	return defaultValue
 }
 
-func getenvIntDefault(key string, fallback int) int {
+func getenvIntDefault(key string, defaultValue int) int {
 	raw := os.Getenv(key)
 	if raw == "" {
-		return fallback
+		return defaultValue
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil {
-		return fallback
+		return defaultValue
 	}
 	return n
 }

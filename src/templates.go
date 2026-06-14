@@ -24,15 +24,21 @@ code{background:#f4f4f4;padding:.15rem .35rem;border-radius:4px;}
 <style>
 body{font-family:Arial,sans-serif;max-width:1200px;margin:2rem auto;padding:0 1rem;}
 .card{border:1px solid #ddd;border-radius:8px;padding:1rem 1.25rem;margin-bottom:1rem;}
+.card > :first-child{margin-top:0;}
+.card > :last-child{margin-bottom:0;}
+.card h2{margin:0 0 1rem 0;}
 .btn{display:inline-flex;align-items:center;justify-content:center;min-height:2.35rem;box-sizing:border-box;background:#0b57d0;color:#fff;padding:.55rem .9rem;border-radius:6px;text-decoration:none;border:none;cursor:pointer;font:inherit;font-size:.875rem;line-height:1.2;}
 .btn.secondary{background:#444;}
 .btn.warn{background:#b73239;}
 .btn:disabled{background:#aaa;color:#fff;cursor:not-allowed;opacity:1;}
 code{background:#f4f4f4;padding:.15rem .35rem;border-radius:4px;}
-.hidden{filter:blur(5px);user-select:none;}
 small{color:#666;}
 .error{color:#b00020;margin:.5rem 0 1rem 0;}
 .inline-actions{display:flex;gap:.75rem;align-items:center;flex-wrap:wrap;}
+.api-config-sections{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;}
+.api-config-section{border:1px solid #ddd;border-radius:6px;background:#fbfbfb;padding:1rem;}
+.api-config-section h3{margin:0 0 .45rem 0;font-size:1rem;}
+.api-config-section p{margin:.35rem 0 .85rem 0;}
 .app-shell{display:grid;grid-template-columns:260px minmax(0,1fr);gap:1.25rem;align-items:start;}
 .page-crumb{display:flex;gap:.45rem;align-items:center;margin:-.6rem 0 1.2rem 0;color:#666;font-size:.875rem;}
 .page-crumb strong{color:#222;}
@@ -67,11 +73,29 @@ small{color:#666;}
 .policy-toolbar{display:flex;gap:.75rem;align-items:flex-end;flex-wrap:wrap;margin-bottom:1rem;}
 .policy-field{flex:1 1 260px;}
 .policy-field label{display:block;margin-bottom:.35rem;font-weight:700;}
-.policy-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:.65rem 1rem;margin:1rem 0;}
+.policy-apps{display:flex;flex-direction:column;gap:.65rem;margin:1rem 0;}
+.policy-app{border:1px solid #ddd;border-radius:6px;background:#fff;overflow:hidden;}
+.policy-app-toggle{display:flex;align-items:center;justify-content:space-between;gap:.75rem;width:100%;min-height:2.75rem;padding:.7rem .85rem;border:none;background:#f8f9fb;color:#222;cursor:pointer;font:inherit;font-weight:700;text-align:left;}
+.policy-app-toggle:hover{background:#f1f4f8;}
+.policy-app-arrow{font-size:.9rem;color:#555;}
+.policy-app-body{padding:.85rem;}
+.policy-subgroup + .policy-subgroup{margin-top:1rem;}
+.policy-subgroup h3{margin:0 0 .55rem 0;color:#444;font-size:.95rem;}
+.policy-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.65rem 1rem;margin:0;}
 .policy-capability{display:flex;gap:.55rem;align-items:flex-start;border:1px solid #ddd;border-radius:6px;padding:.65rem;background:#fff;}
 .policy-capability input{margin-top:.2rem;}
 .policy-capability strong{display:block;margin-bottom:.15rem;}
 .policy-capability small{display:block;line-height:1.35;}
+.policy-capability .risk-score{display:inline-flex;align-items:center;gap:.35rem;margin-bottom:.15rem;color:#666;font-size:.78rem;}
+.risk-help{position:relative;display:inline-flex;align-items:center;justify-content:center;width:1rem;height:1rem;border:1px solid #bbb;border-radius:999px;color:#555;background:#fff;font-size:.68rem;font-weight:700;line-height:1;cursor:help;}
+.risk-help:focus{outline:2px solid #0b57d0;outline-offset:2px;}
+.risk-help:before{content:attr(data-tooltip);position:absolute;left:50%;bottom:calc(100% + .45rem);transform:translateX(-50%);display:none;width:220px;max-width:70vw;padding:.5rem .6rem;border:1px solid #ccc;border-radius:6px;background:#222;color:#fff;box-shadow:0 6px 18px rgba(0,0,0,.18);font-size:.75rem;font-weight:400;line-height:1.35;text-align:left;white-space:normal;z-index:20;}
+.risk-help:after{content:"";position:absolute;left:50%;bottom:calc(100% + .18rem);transform:translateX(-50%);display:none;border:.3rem solid transparent;border-top-color:#222;z-index:21;}
+.risk-help:hover:before,.risk-help:hover:after,.risk-help:focus:before,.risk-help:focus:after{display:block;}
+.risk-swatch{display:inline-block;width:.65rem;height:.65rem;border-radius:2px;flex:0 0 auto;}
+.risk-low{background:#188038;}
+.risk-medium{background:#f29900;}
+.risk-high{background:#b3261e;}
 .policy-group{margin:1.25rem 0 .35rem 0;}
 .account-actions{display:flex;gap:.75rem;align-items:flex-start;flex-wrap:wrap;}
 .account-update-form{display:flex;gap:.75rem;align-items:flex-start;flex:1 1 420px;min-width:280px;}
@@ -92,12 +116,24 @@ th,td{border:1px solid #ddd;padding:.65rem;text-align:left;vertical-align:top;wo
 .discovery-box{max-width:420px;background:#fff;border:1px solid #ddd;border-radius:8px;padding:1.25rem 1.5rem;box-shadow:0 8px 28px rgba(0,0,0,.14);}
 .discovery-box h2{margin:.1rem 0 .5rem 0;}
 .discovery-box p{margin:.4rem 0;color:#444;}
+.setup-box{max-width:720px;}
+.setup-box pre{white-space:pre-wrap;overflow:auto;background:#f6f8fa;border:1px solid #ddd;border-radius:6px;padding:.85rem;font-size:.82rem;line-height:1.45;}
+.setup-box pre code{display:block;margin:0;text-indent:0;}
+.overlay-title-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin:.1rem 0 .5rem 0;}
+.overlay-title-row h2{margin:0;}
+.overlay-close{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:2rem;height:2rem;border:none;border-radius:6px;background:transparent;color:#444;cursor:pointer;font:inherit;font-size:1.25rem;line-height:1;}
+.overlay-close:hover{background:#f1f4f8;color:#111;}
+.setup-heading{display:flex;align-items:center;justify-content:space-between;gap:.75rem;margin-top:1rem;}
+.setup-heading h3{margin:0;}
+.copy-btn{min-height:1.9rem;padding:.35rem .6rem;font-size:.78rem;}
+.setup-actions{display:flex;justify-content:flex-end;margin-top:1rem;}
 .spinner{width:28px;height:28px;border:3px solid #d7d7d7;border-top-color:#0b57d0;border-radius:50%;animation:spin .9s linear infinite;margin-bottom:.75rem;}
 @keyframes spin{to{transform:rotate(360deg);}}
 input[type="text"],select{box-sizing:border-box;max-width:100%;width:100%;min-height:2.35rem;padding:.55rem .6rem;font:inherit;font-size:.875rem;line-height:1.2;}
 label.checkbox{display:inline-flex;gap:.35rem;align-items:center;white-space:nowrap;}
 @media (max-width: 900px){
   .app-shell{grid-template-columns:1fr;}
+  .policy-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
   .folder-form{grid-template-columns:1fr;}
   .folder-form .checks{grid-column:auto;}
   .account-update-form{flex-direction:column;align-items:stretch;}
@@ -108,22 +144,18 @@ label.checkbox{display:inline-flex;gap:.35rem;align-items:center;white-space:now
   tr{border:1px solid #ddd;margin-bottom:1rem;padding:.5rem;}
   td{border:none;padding:.35rem 0;}
 }
+@media (max-width: 640px){
+  .policy-grid{grid-template-columns:1fr;}
+}
 </style>
 <script>
-function toggleToken(){
-  const el = document.getElementById('proxyToken');
-  if (!el.dataset.loaded) {
-    fetch('/api/token/reveal',{credentials:'same-origin'})
-      .then(r=>r.json())
-      .then(d=>{ if(d.token){ el.textContent=d.token; el.dataset.loaded='1'; el.classList.remove('hidden'); } });
-    return;
-  }
-  el.classList.toggle('hidden');
+function confirmAgentWorkspaceAPIKeyRotate(){
+  return confirm('Rotate the AI agents Workspace API key? Existing agent configs and installed skills using the old key will stop working immediately.');
 }
-function confirmRotate(){
-  return confirm('Rotate the Proxy API token? The old token will stop working immediately.');
+function confirmUserBackendAPIKeyRotate(){
+  return confirm('Rotate the end-user backend API key? Existing user backend configs using the old key will stop working immediately.');
 }
-function syncCheckboxFallback(prefix){
+function ensureDriveTypeSelection(prefix){
   const boxes = [
     document.getElementById(prefix + '_docs'),
     document.getElementById(prefix + '_sheets'),
@@ -142,8 +174,81 @@ function showDriveDiscoveryOverlay(){
   }
   return true;
 }
+function showAgentSkillSetupOverlay(){
+  const overlay = document.getElementById('agentSkillSetupOverlay');
+  if (overlay) {
+    overlay.classList.add('active');
+  }
+}
+function closeAgentSkillSetupOverlay(){
+  const overlay = document.getElementById('agentSkillSetupOverlay');
+  if (overlay) {
+    overlay.classList.remove('active');
+  }
+}
+function copyAgentSkillCommand(id, button){
+  const el = document.getElementById(id);
+  if (!el || !navigator.clipboard) {
+    return;
+  }
+  navigator.clipboard.writeText(el.textContent.trim()).then(() => {
+    const original = button.textContent;
+    button.textContent = 'Copied';
+    setTimeout(() => { button.textContent = original; }, 1200);
+  }).catch(() => {});
+}
+function syncAgentSkillDownloadButton(){
+  const select = document.getElementById('agentSkillPlatform');
+  const button = document.getElementById('agentSkillDownloadButton');
+  if (select && button) {
+    button.disabled = !select.value;
+  }
+}
+function startAgentSkillDownload(){
+  const select = document.getElementById('agentSkillPlatform');
+  const platform = select ? select.value : '';
+  if (!platform) {
+    syncAgentSkillDownloadButton();
+    return false;
+  }
+  showAgentSkillSetupOverlay();
+  const installCommand = document.getElementById('agentSkillInstallCommand');
+  const expires = document.getElementById('agentSkillInstallExpires');
+  const error = document.getElementById('agentSkillInstallError');
+  const installNote = document.getElementById('agentSkillInstallNote');
+  const postInstallNote = document.getElementById('agentSkillPostInstallNote');
+  if (installCommand) installCommand.textContent = 'Generating secure install command...';
+  if (expires) expires.textContent = '';
+  if (error) error.textContent = '';
+  if (installNote) installNote.textContent = '';
+  if (postInstallNote) postInstallNote.textContent = '';
+  const body = new URLSearchParams();
+  body.append('csrf_token', '{{.CSRFToken}}');
+  body.append('platform', platform);
+  fetch('/api/agent-skill/install-token', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body
+  })
+    .then(async response => {
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || 'Unable to generate install command.');
+      }
+      if (installCommand) installCommand.textContent = (data.install_command || '').trim();
+      if (expires) expires.textContent = 'The download token expires at ' + (data.expires_at_display || data.expires_at || '') + ' and is consumed after one successful download.';
+      if (installNote) installNote.textContent = data.install_note || '';
+      if (postInstallNote) postInstallNote.textContent = data.post_install_note || '';
+    })
+    .catch(err => {
+      if (error) error.textContent = err.message || String(err);
+      if (installCommand) installCommand.textContent = '';
+    });
+  return false;
+}
 function prepareDriveFolderSubmit(prefix){
-  if (!syncCheckboxFallback(prefix)) {
+  if (!ensureDriveTypeSelection(prefix)) {
     return false;
   }
   return showDriveDiscoveryOverlay();
@@ -281,10 +386,20 @@ function applySystemDefaultPolicy(){
     input.dispatchEvent(new Event('change', {bubbles: true}));
   });
 }
+function togglePolicyApp(button){
+  const body = document.getElementById(button.getAttribute('aria-controls'));
+  const arrow = button.querySelector('.policy-app-arrow');
+  if (!body) return;
+  const expanded = button.getAttribute('aria-expanded') === 'true';
+  button.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+  body.hidden = expanded;
+  if (arrow) arrow.innerHTML = expanded ? '&#9662;' : '&#9652;';
+}
 document.addEventListener('DOMContentLoaded', () => {
   initWorkspaceDrag();
   initTrackedForms();
   initRequiredForms();
+  syncAgentSkillDownloadButton();
 });
 </script>
 </head><body>
@@ -294,6 +409,28 @@ document.addEventListener('DOMContentLoaded', () => {
     <h2>Discovering Drive folders</h2>
     <p>The proxy is discovering the folder tree and caching subfolders for agent access.</p>
     <p>This can take a few minutes for large Google Drive folders. The dashboard will return automatically when the operation finishes.</p>
+  </div>
+</div>
+<div id="agentSkillSetupOverlay" class="discovery-overlay" role="dialog" aria-modal="true" aria-labelledby="agentSkillSetupTitle">
+  <div class="discovery-box setup-box">
+    <div class="overlay-title-row">
+      <h2 id="agentSkillSetupTitle">Install the AI agent skill</h2>
+      <button class="overlay-close" type="button" aria-label="Close overlay" onclick="closeAgentSkillSetupOverlay()">&times;</button>
+    </div>
+    <p>The command below downloads the skill to <code>/tmp</code>, installs it locally, runs the bootstrap, and deletes the temporary zip.</p>
+    <p id="agentSkillInstallExpires"><small></small></p>
+    <p id="agentSkillInstallError" class="error"></p>
+    <div class="setup-heading">
+      <h3>With curl or wget</h3>
+      <button class="btn copy-btn" type="button" onclick="copyAgentSkillCommand('agentSkillInstallCommand', this)">COPY</button>
+    </div>
+    <pre><code id="agentSkillInstallCommand">Generating secure install command...</code></pre>
+    <p><small>The download token is single-use. If the command fails before the download starts, click the button again to generate a fresh command.</small></p>
+    <p><small id="agentSkillInstallNote"></small></p>
+    <p><small id="agentSkillPostInstallNote"></small></p>
+    <div class="setup-actions">
+      <button class="btn" type="button" onclick="closeAgentSkillSetupOverlay()">Understood</button>
+    </div>
   </div>
 </div>
 <h1>{{.AppName}}</h1>
@@ -394,7 +531,7 @@ document.addEventListener('DOMContentLoaded', () => {
 <div class="card">
   <h2>{{if .PolicyEditor.SelectedIsNew}}New custom policy{{else}}{{.PolicyEditor.SelectedName}}{{end}}</h2>
   {{if .PolicyEditor.SelectedIsSystem}}
-    <p><small>The system default policy is read-only and cannot be edited or deleted. Create a custom policy to change selections.</small></p>
+    <p><small>The system default policy allows all Low-risk capabilities and cannot be edited or deleted. Create a custom policy to change selections.</small></p>
   {{else}}
     <p><small>Select the friendly capabilities this policy should allow. The proxy translates these choices into Google API allow rules.</small></p>
   {{end}}
@@ -411,16 +548,34 @@ document.addEventListener('DOMContentLoaded', () => {
         <button class="btn" type="submit">Save policy</button>
       {{end}}
     </div>
-    <div class="policy-grid">
-      {{range .PolicyEditor.Capabilities}}
-      <label class="policy-capability">
-        <input data-policy-capability="true" data-system-default="{{.SystemDefault}}" type="checkbox" name="capability" value="{{.Key}}" {{if .Checked}}checked{{end}} {{if $.PolicyEditor.SelectedIsSystem}}disabled{{end}}>
-        <span>
-          <small>{{.Group}}</small>
-          <strong>{{.Title}}</strong>
-          <small>{{.Summary}}{{if .RequiresDriveRefs}} Uses configured allowed Drive folders.{{end}}</small>
-        </span>
-      </label>
+    <div class="policy-apps">
+      {{range .PolicyEditor.CapabilityGroups}}
+      <section class="policy-app">
+        <button class="policy-app-toggle" type="button" aria-expanded="false" aria-controls="policy_app_{{.Name}}" onclick="togglePolicyApp(this)">
+          <span>{{.Name}}</span>
+          <span class="policy-app-arrow" aria-hidden="true">&#9662;</span>
+        </button>
+        <div id="policy_app_{{.Name}}" class="policy-app-body" hidden>
+          {{$showSubgroups := .ShowSubgroups}}
+          {{range .Subgroups}}
+            <div class="policy-subgroup">
+              {{if $showSubgroups}}<h3>{{.Name}}</h3>{{end}}
+              <div class="policy-grid">
+                {{range .Capabilities}}
+                <label class="policy-capability">
+                  <input data-policy-capability="true" data-system-default="{{.SystemDefault}}" type="checkbox" name="capability" value="{{.Key}}" {{if .Checked}}checked{{end}} {{if $.PolicyEditor.SelectedIsSystem}}disabled{{end}}>
+                  <span>
+                    <small class="risk-score"><span>Risk:</span><span class="risk-swatch {{.RiskClass}}" aria-hidden="true"></span><span>{{.RiskLabel}}</span><span class="risk-help" tabindex="0" role="img" aria-label="{{.RiskDescription}}" data-tooltip="{{.RiskDescription}}">(?)</span></small>
+                    <strong>{{.Title}}</strong>
+                    <small>{{.Summary}}{{if .RequiresDriveRefs}} Uses configured allowed folders.{{end}}</small>
+                  </span>
+                </label>
+                {{end}}
+              </div>
+            </div>
+            {{end}}
+        </div>
+      </section>
       {{end}}
     </div>
   </form>
@@ -453,18 +608,47 @@ document.addEventListener('DOMContentLoaded', () => {
 </div>
 {{else if .ShowDashboard}}
 <div class="card">
-  <h2>Proxy API token</h2>
-  <p><code id="proxyToken" class="hidden">{{.TokenHint}}</code></p>
-  <div class="inline-actions">
-    <button class="btn" type="button" onclick="toggleToken()">Show / hide token</button>
-    <a class="btn" href="/api/token/download-config">Download JSON</a>
-    <a class="btn" href="/api/agent-skill/download">Download agent skill</a>
-    <form method="post" action="/api/token/rotate" onsubmit="return confirmRotate();">
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <button class="btn warn" type="submit">Rotate key</button>
-    </form>
+  <h2>Download skill for AI agent</h2>
+  <p>The skill package is the recommended way to grant AI agents access to Google Workspace applications through the proxy. It contains the proxy helper script, policy-filtered Workspace instructions, and a configuration file with the API key required to use the proxy.</p>
+  <div class="policy-toolbar">
+    <div class="policy-field">
+      <label for="agentSkillPlatform">Skill package</label>
+      <select id="agentSkillPlatform" onchange="syncAgentSkillDownloadButton()">
+        <option value="">Please select the skill to download</option>
+        <option value="generic">Generic</option>
+        <option value="openclaw">OpenClaw</option>
+      </select>
+    </div>
+    <button id="agentSkillDownloadButton" class="btn" type="button" onclick="return startAgentSkillDownload()" disabled>Download</button>
   </div>
-  <p><small>Use with <code>Authorization: Bearer &lt;token&gt;</code></small></p>
+</div>
+<div class="card">
+  <h2>Proxy API Configurations</h2>
+  <p>Download standalone configuration files when you need to set up tools manually instead of using the skill package. Rotating an API key is useful if you fear that one of your API keys may have leaked. Rotation immediately invalidates the current key, so tools that rely on that key will stop working.</p>
+  <div class="api-config-sections">
+    <section class="api-config-section">
+      <h3>Configuration file for AI agents</h3>
+      <p><small>Download this file for AI agents and generated skills. It contains the standard Workspace API key used to access Gmail, Calendar, Drive, Docs, Sheets, and Slides through the proxy policy controls.</small></p>
+      <div class="inline-actions">
+        <a class="btn" href="/api/config/agents-workspace-api-access/download">Download config</a>
+        <form method="post" action="/api/config/agents-workspace-api-access/rotate" onsubmit="return confirmAgentWorkspaceAPIKeyRotate();">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <button class="btn warn" type="submit">Rotate API key</button>
+        </form>
+      </div>
+    </section>
+    <section class="api-config-section">
+      <h3>Configuration file for end-users</h3>
+      <p><small>Download this file for user-owned backend tools that manage your account settings, proxy policies, access to logs, etc. Do NOT give this privileged configuration file to AI agents.</small></p>
+      <div class="inline-actions">
+        <a class="btn" href="/api/config/user-backend-api-access/download">Download config</a>
+        <form method="post" action="/api/config/user-backend-api-access/rotate" onsubmit="return confirmUserBackendAPIKeyRotate();">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <button class="btn warn" type="submit">Rotate API key</button>
+        </form>
+      </div>
+    </section>
+  </div>
 </div>
 {{else}}
 
@@ -480,7 +664,7 @@ document.addEventListener('DOMContentLoaded', () => {
     </ul>
     <p><strong>Connected since:</strong> {{.Workspace.ConnectedSince}}</p>
     <p><strong>Connection status:</strong> {{.Workspace.ConnectionStatus}}</p>
-    <p><strong>Proxy API token:</strong> {{.Workspace.ProxyTokenStatus}}</p>
+    <p><strong>Agent Workspace API key:</strong> {{.Workspace.ProxyTokenStatus}}</p>
     <p><small>Workspace access is refreshed automatically and remains active until access is revoked or disconnected.</small></p>
     <div class="account-actions">
       <form method="post" action="/workspace/account/update" class="account-update-form" data-track-changes="true">
@@ -520,7 +704,7 @@ document.addEventListener('DOMContentLoaded', () => {
 </div>
 
 <div class="card">
-  <h2>Allowed AI Drive folders</h2>
+  <h2>Allowed Drive folders</h2>
   <p><small>Use a unique Reference Name. Agents can refer to folders by that name. Registered folders include cached subfolders.</small></p>
   {{if .FolderError}}<p class="error">{{.FolderError}}</p>{{end}}
   <form method="post" action="/workspace/drive-folders/add" class="folder-form" data-require-complete="true" onsubmit="return prepareDriveFolderSubmit('new');">
@@ -533,7 +717,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <label class="checkbox"><input id="new_docs" type="checkbox" name="allow_docs" checked> Docs</label>
       <label class="checkbox"><input id="new_sheets" type="checkbox" name="allow_sheets" checked> Sheets</label>
       <label class="checkbox"><input id="new_slides" type="checkbox" name="allow_slides" checked> Slides</label>
-      <label class="checkbox"><input id="new_drive" type="checkbox" name="allow_drive_files" checked> Drive files</label>
+      <label class="checkbox"><input id="new_drive" type="checkbox" name="allow_drive_files" checked> Non-Google files</label>
     </div>
   </form>
 
@@ -559,7 +743,7 @@ document.addEventListener('DOMContentLoaded', () => {
             {{if .AllowDocs}}<li>Docs</li>{{end}}
             {{if .AllowSheets}}<li>Sheets</li>{{end}}
             {{if .AllowSlides}}<li>Slides</li>{{end}}
-            {{if .AllowDriveFiles}}<li>Drive</li>{{end}}
+            {{if .AllowDriveFiles}}<li>Non-Google files</li>{{end}}
           </ul>
         </td>
         <td>
@@ -572,7 +756,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <label class="checkbox"><input id="f_{{.ID}}_docs" type="checkbox" name="allow_docs" {{if .AllowDocs}}checked{{end}}> Docs</label>
               <label class="checkbox"><input id="f_{{.ID}}_sheets" type="checkbox" name="allow_sheets" {{if .AllowSheets}}checked{{end}}> Sheets</label>
               <label class="checkbox"><input id="f_{{.ID}}_slides" type="checkbox" name="allow_slides" {{if .AllowSlides}}checked{{end}}> Slides</label>
-              <label class="checkbox"><input id="f_{{.ID}}_drive" type="checkbox" name="allow_drive_files" {{if .AllowDriveFiles}}checked{{end}}> Drive</label>
+              <label class="checkbox"><input id="f_{{.ID}}_drive" type="checkbox" name="allow_drive_files" {{if .AllowDriveFiles}}checked{{end}}> Non-Google files</label>
             </div>
           </form>
           <div class="folder-action-row">

@@ -2,9 +2,11 @@
 
 Read only the file that matches the user's task:
 
-- `skills/{{WORKSPACE_EMAIL}}/drive/FILES.md`: Drive file operations - search, read, create, edit, delete, share, comment, and inspect Drive files.
-- `skills/{{WORKSPACE_EMAIL}}/drive/DOCS.md`: Google Docs operations - read, create, and edit Google Docs.
-- `skills/{{WORKSPACE_EMAIL}}/drive/SHEETS.md`: Google Sheets operations - read, create, and edit Google Sheets.
-- `skills/{{WORKSPACE_EMAIL}}/drive/SLIDES.md`: Google Slides operations - read, create, and edit Google Slides.
+- `{baseDir}/skills/{{WORKSPACE_EMAIL}}/drive/FILES.md`: Drive metadata and non-Google-native file operations - search metadata, read/download non-Google files, create/edit/delete non-Google files, share, comment, label, and inspect revisions.
+- `{baseDir}/skills/{{WORKSPACE_EMAIL}}/drive/DOCS.md`: Google Docs operations - read, export, create, edit, and delete Google Docs.
+- `{baseDir}/skills/{{WORKSPACE_EMAIL}}/drive/SHEETS.md`: Google Sheets operations - read, export, create, edit, and delete Google Sheets.
+- `{baseDir}/skills/{{WORKSPACE_EMAIL}}/drive/SLIDES.md`: Google Slides operations - read, export, create, edit, and delete Google Slides.
 
-If the needed operation is not documented in the matching file, treat it as unavailable for this workspace unless the user asks to refresh the skill package.
+If the needed operation is not covered by an allowed capability in the matching file, treat it as unavailable for this workspace unless the user asks to refresh/update the skill package.
+
+If the operation is covered by an allowed capability but no helper example is shown, use full passthrough mode with the official Google Workspace API documentation.

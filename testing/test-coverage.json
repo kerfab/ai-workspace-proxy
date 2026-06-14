@@ -1,0 +1,1429 @@
+{
+  "version": 1,
+  "description": "Coverage registry for AI Workspace Proxy features and policy permissions. Empty tests arrays mean no automated test is currently attached.",
+  "test_entry_schema": {
+    "test_name": "Human-readable test name.",
+    "test_summary": "One-line test goal.",
+    "test_script": "Repository-relative path to the test file or script used to run the test.",
+    "live": "Optional boolean. True means the test touches a real external service and is only run by testing/start-test.py when --live TEST_ACCOUNT_EMAIL is provided."
+  },
+  "items": [
+    {
+      "id": "feature.config_validation",
+      "kind": "feature",
+      "name": "Configuration validation",
+      "summary": "Load and validate environment configuration, including required OAuth settings, allowed email domains, admins, and encryption key format.",
+      "tests": [
+        {
+          "test_name": "TestParseEncryptionKeyRequiresStrongKeyMaterial",
+          "test_summary": "Verifies encryption keys must be 32 raw bytes, 64 hex characters, or base64 for exactly 32 bytes, and rejects weak strings.",
+          "test_script": "src/config_test.go"
+        }
+      ]
+    },
+    {
+      "id": "feature.policy_catalog_validation",
+      "kind": "feature",
+      "name": "Policy catalog validation",
+      "summary": "Validate that every policy capability has consistent metadata, valid rules, and explicit risk information before server startup.",
+      "tests": [
+        {
+          "test_name": "TestValidatePolicyCatalog",
+          "test_summary": "Verifies the policy catalog validates successfully, including risk score and risk explanation coverage.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "TestSystemDefaultPolicyMatchesLowRiskCapabilities",
+          "test_summary": "Verifies the system default policy includes every Low-risk capability and excludes all Medium/High-risk capabilities.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "TestPolicyCoverageRegistryCoversEveryCapability",
+          "test_summary": "Verifies every policy permission offered by the catalog is present in the coverage registry and has at least one automated test entry.",
+          "test_script": "src/policy_test.go"
+        }
+      ]
+    },
+    {
+      "id": "feature.proxy_google_login",
+      "kind": "feature",
+      "name": "Proxy Google login",
+      "summary": "Allow users to sign in to the proxy with verified Google accounts under allowed email domains.",
+      "tests": []
+    },
+    {
+      "id": "feature.session_and_csrf",
+      "kind": "feature",
+      "name": "Session and CSRF protection",
+      "summary": "Maintain browser sessions and require CSRF tokens for state-changing dashboard actions.",
+      "tests": []
+    },
+    {
+      "id": "feature.logout",
+      "kind": "feature",
+      "name": "Logout",
+      "summary": "Allow users to invalidate their browser session and clear the session cookie.",
+      "tests": []
+    },
+    {
+      "id": "feature.user_settings_timezone",
+      "kind": "feature",
+      "name": "User timezone settings",
+      "summary": "Allow each user to select a local timezone and render timestamps according to that preference.",
+      "tests": []
+    },
+    {
+      "id": "feature.workspace_oauth_connection",
+      "kind": "feature",
+      "name": "Workspace OAuth connection",
+      "summary": "Allow a proxy user to connect Google Workspace accounts and store encrypted OAuth tokens for each account.",
+      "tests": []
+    },
+    {
+      "id": "feature.workspace_token_refresh",
+      "kind": "feature",
+      "name": "Workspace OAuth token refresh",
+      "summary": "Refresh Workspace access tokens from encrypted refresh tokens before forwarding Google requests.",
+      "tests": []
+    },
+    {
+      "id": "feature.multiple_workspace_accounts",
+      "kind": "feature",
+      "name": "Multiple Workspace accounts",
+      "summary": "Allow one proxy user to manage multiple connected Workspace accounts selected by friendly name or email.",
+      "tests": []
+    },
+    {
+      "id": "feature.workspace_friendly_name",
+      "kind": "feature",
+      "name": "Workspace friendly names",
+      "summary": "Allow users to edit non-empty friendly names and resolve ambiguous names safely.",
+      "tests": []
+    },
+    {
+      "id": "feature.workspace_ordering",
+      "kind": "feature",
+      "name": "Workspace ordering preference",
+      "summary": "Persist user-defined left-menu Workspace ordering and add newly connected Workspaces at the top.",
+      "tests": []
+    },
+    {
+      "id": "feature.workspace_disconnect",
+      "kind": "feature",
+      "name": "Workspace disconnect",
+      "summary": "Allow users to disconnect a Workspace account and synchronize related stored preferences.",
+      "tests": []
+    },
+    {
+      "id": "feature.agent_workspace_api_key_management",
+      "kind": "feature",
+      "name": "Agent Workspace API key management",
+      "summary": "Create, download, and rotate the per-user standard API key used by AI agents for policy-enforced Google Workspace operations.",
+      "tests": []
+    },
+    {
+      "id": "feature.user_backend_api_key_management",
+      "kind": "feature",
+      "name": "End-user backend API key management",
+      "summary": "Create, download, and rotate the privileged per-user API key reserved for user-owned backend configuration clients.",
+      "tests": []
+    },
+    {
+      "id": "feature.privileged_user_configuration_api",
+      "kind": "feature",
+      "name": "Privileged user configuration API",
+      "summary": "Allow user-owned privileged API clients to manage user-level proxy settings, policies, Workspace policy assignment, and test setup without bypassing policy enforcement for Google Workspace operations.",
+      "tests": [
+        {
+          "test_name": "TestUserPolicyAPIRejectsStandardAgentKey",
+          "test_summary": "Verifies standard agent Workspace API keys cannot access privileged user configuration APIs.",
+          "test_script": "src/app_policy_api_handlers_test.go"
+        },
+        {
+          "test_name": "TestUserPolicyAPICreateUpdateApplyDelete",
+          "test_summary": "Verifies privileged clients can create, update, apply, and delete custom policies while preserving policy state.",
+          "test_script": "src/app_policy_api_handlers_test.go"
+        },
+        {
+          "test_name": "TestUserPolicyAPISystemPolicyIsImmutableButApplyable",
+          "test_summary": "Verifies the system policy cannot be created, updated, or deleted, but can be applied.",
+          "test_script": "src/app_policy_api_handlers_test.go"
+        },
+        {
+          "test_name": "TestUserWorkspacesAPIRequiresBackendKeyAndReturnsPolicy",
+          "test_summary": "Verifies the privileged Workspace API rejects standard agent keys and returns current Workspace policy assignment.",
+          "test_script": "src/app_workspace_api_handlers_test.go"
+        }
+      ]
+    },
+    {
+      "id": "feature.download_proxy_config",
+      "kind": "feature",
+      "name": "Download proxy API config files",
+      "summary": "Generate `agents-workspace-api-access.config.json` for AI agents and `user-backend-api-access.config.json` for user-owned backend configuration clients.",
+      "tests": [
+        {
+          "test_name": "TestAgentWorkspaceAPIConfigUsesRenamedFileAndSortedWorkspaces",
+          "test_summary": "Verifies the agent config filename, config metadata, token field, skill platform, and Workspace email sorting.",
+          "test_script": "src/app_token_handlers_test.go"
+        }
+      ]
+    },
+    {
+      "id": "feature.policy_editor",
+      "kind": "feature",
+      "name": "Policy editor",
+      "summary": "Allow users to create, edit, delete, and choose default custom policies from friendly capabilities.",
+      "tests": [
+        {
+          "test_name": "TestPolicyCapabilityGroupsCalendarSubgroupsAndSorting",
+          "test_summary": "Verifies Calendar policy capabilities are grouped into Events Operations and Calendars Operations, then sorted by risk and title.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "TestPolicyCapabilityGroupsDriveCommentsSubgroupAndSorting",
+          "test_summary": "Verifies comment permissions are grouped into their own Comments subsection, then sorted by risk and title.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "TestPolicyCapabilityGroupsDriveFilesSortingNoDrives",
+          "test_summary": "Verifies Drive file permissions include labels and revisions, are sorted by risk and title, and do not expose a drive-management subsection.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "TestPolicyCapabilityGroupsGmailSubgroupsAndSorting",
+          "test_summary": "Verifies Gmail policy capabilities are grouped into Emails, Labels, and Mailbox subsections, then sorted by risk and title.",
+          "test_script": "src/policy_test.go"
+        }
+      ]
+    },
+    {
+      "id": "feature.workspace_policy_assignment",
+      "kind": "feature",
+      "name": "Workspace policy assignment",
+      "summary": "Allow users to select which policy applies to each connected Workspace account.",
+      "tests": []
+    },
+    {
+      "id": "feature.proxy_relay",
+      "kind": "feature",
+      "name": "Google API proxy relay",
+      "summary": "Authenticate proxy API calls, resolve Workspace identity, enforce policy, and forward allowed requests to Google.",
+      "tests": []
+    },
+    {
+      "id": "feature.denied_request_logging",
+      "kind": "feature",
+      "name": "Denied request logging",
+      "summary": "Log denied proxy requests while redacting authorization, cookies, and Gmail raw MIME bodies.",
+      "tests": []
+    },
+    {
+      "id": "feature.drive_folder_management",
+      "kind": "feature",
+      "name": "Allowed Drive folder management",
+      "summary": "Allow users to register, update, refresh, and delete allowed Drive folder references per Workspace.",
+      "tests": [
+        {
+          "test_name": "TestUserDriveFoldersAPIRequiresBackendKeyAndListsRefs",
+          "test_summary": "Verifies privileged clients can list allowed Drive folder references for a Workspace while standard agent keys are rejected.",
+          "test_script": "src/app_workspace_api_handlers_test.go"
+        }
+      ]
+    },
+    {
+      "id": "feature.drive_tree_cache",
+      "kind": "feature",
+      "name": "Drive subfolder tree cache",
+      "summary": "Recursively discover Drive subfolders, cache them in SQLite, and use the cache for subfolder operations.",
+      "tests": []
+    },
+    {
+      "id": "feature.drive_folder_tree_api",
+      "kind": "feature",
+      "name": "Drive folder tree API",
+      "summary": "Expose proxy APIs for agents to list and refresh cached Drive folder trees.",
+      "tests": []
+    },
+    {
+      "id": "feature.drive_request_rewriting",
+      "kind": "feature",
+      "name": "Drive and structured file request rewriting",
+      "summary": "Rewrite Drive, Docs, Sheets, and Slides requests so creates/searches stay inside allowed folder trees.",
+      "tests": []
+    },
+    {
+      "id": "feature.agent_skill_generation",
+      "kind": "feature",
+      "name": "Agent skill generation",
+      "summary": "Build policy-filtered agent skill zip packages containing config, scripts, and Workspace-specific Markdown files.",
+      "tests": []
+    },
+    {
+      "id": "feature.agent_skill_install_tokens",
+      "kind": "feature",
+      "name": "Agent skill install tokens",
+      "summary": "Create single-use 10-minute download tokens for local agent skill installation.",
+      "tests": []
+    },
+    {
+      "id": "feature.agent_skill_install_scripts",
+      "kind": "feature",
+      "name": "Agent skill install and bootstrap scripts",
+      "summary": "Install, bootstrap, and update generated skill packages for Generic and OpenClaw targets.",
+      "tests": [
+        {
+          "test_name": "Shell syntax checks for agent skill scripts",
+          "test_summary": "Verifies generated install, bootstrap, and update shell scripts parse successfully with `sh -n`.",
+          "test_script": "src/agent_skill_assets/scripts/*.sh"
+        },
+        {
+          "test_name": "Python syntax check for workspace proxy tool",
+          "test_summary": "Verifies the generated Python proxy helper compiles with `python3 -m py_compile`.",
+          "test_script": "src/agent_skill_assets/scripts/workspace_proxy_tool.py"
+        }
+      ]
+    },
+    {
+      "id": "feature.admin_user_management",
+      "kind": "feature",
+      "name": "Admin user management",
+      "summary": "Allow configured admins to list users, inspect user stats, suspend, unsuspend, and delete users.",
+      "tests": []
+    },
+    {
+      "id": "feature.sqlite_persistence",
+      "kind": "feature",
+      "name": "SQLite persistence",
+      "summary": "Persist users, sessions, OAuth states, tokens, Workspaces, policies, Drive references, Drive tree cache, stats, and agent skill tokens.",
+      "tests": []
+    },
+    {
+      "id": "feature.dashboard_ui",
+      "kind": "feature",
+      "name": "Dashboard user interface",
+      "summary": "Render dashboard, left navigation, settings, policy editor, Workspace management, Drive folder management, and install overlays.",
+      "tests": []
+    },
+    {
+      "id": "policy.gmail_profile_read",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Read profile",
+      "summary": "Allow agents to read the connected account profile and mailbox history metadata.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailReadPermissions",
+          "test_summary": "Verifies Gmail profile and history reads are allowed while email reads remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Read profile",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Read profile.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_messages_read",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Read emails",
+      "summary": "Allow agents to search, list, read, and download attachments from emails and threads.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailReadPermissions",
+          "test_summary": "Verifies Gmail email, attachment, and thread read routes are allowed while send routes remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Read emails",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Read emails.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_drafts_read",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Read drafts",
+      "summary": "Allow agents to list and read existing drafts without changing them.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailReadPermissions",
+          "test_summary": "Verifies Gmail draft list/get routes are allowed while draft creation remains blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Read drafts",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Read drafts.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_labels_read",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Read labels",
+      "summary": "Allow agents to list and read label definitions.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailReadPermissions",
+          "test_summary": "Verifies Gmail label list/get routes are allowed while label creation remains blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Read labels",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Read labels.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_drafts_write",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Create and edit drafts",
+      "summary": "Allow agents to create and update drafts, but not delete or send them.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailWritePermissions",
+          "test_summary": "Verifies draft create/update routes are allowed while draft delete and send remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Create and edit drafts",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Create and edit drafts.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.contacts_read",
+      "kind": "policy_permission",
+      "group": "Contacts",
+      "name": "Read contacts",
+      "summary": "Allow agents to search contacts and directory entries to resolve people from partial names or email hints.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineContactsReadPermissions",
+          "test_summary": "Verifies People API contact, directory, and other-contact search routes are allowed while broad contact listing and writes remain blocked.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Read contacts",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Read contacts.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_drafts_delete",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Delete drafts",
+      "summary": "Allow agents to delete existing drafts without sending them.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailWritePermissions",
+          "test_summary": "Verifies draft delete routes are allowed while draft create and send remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Delete drafts",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Delete drafts.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_send",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Send emails",
+      "summary": "Allow agents to send emails and drafts from the connected mailbox.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailWritePermissions",
+          "test_summary": "Verifies Gmail email and draft send routes are allowed while draft creation remains blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Send emails",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Send emails.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_labels_apply_custom",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Apply or remove custom labels",
+      "summary": "Allow agents to apply or remove user-created labels on emails and threads.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailWritePermissions",
+          "test_summary": "Verifies custom label changes are allowed while archive, spam, trash, and other label effects remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Apply or remove custom labels",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Apply or remove custom labels.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_messages_archive",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Archive or unarchive emails",
+      "summary": "Allow agents to archive emails by removing Inbox, or unarchive them by restoring Inbox.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailWritePermissions",
+          "test_summary": "Verifies Inbox label changes are allowed while custom label and other system-label effects remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Archive or unarchive emails",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Archive or unarchive emails.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_messages_status",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Change email status",
+      "summary": "Allow agents to mark emails read or unread, starred or unstarred, and important or not important.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailWritePermissions",
+          "test_summary": "Verifies read/unread, starred, and important label changes are allowed while unexpected body keys are denied.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Change email status",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Change email status.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_messages_spam",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Move emails to or from Spam",
+      "summary": "Allow agents to mark emails as spam or remove them from spam.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailWritePermissions",
+          "test_summary": "Verifies Spam label changes are allowed while Trash and other label effects remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Move emails to or from Spam",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Move emails to or from Spam.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_messages_trash",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Move emails to or from Trash",
+      "summary": "Allow agents to move emails and threads to Trash or restore them from Trash.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailWritePermissions",
+          "test_summary": "Verifies email/thread trash and untrash routes plus Trash label changes are allowed while permanent deletion remains separately blocked.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Move emails to or from Trash",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Move emails to or from Trash.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_labels_create_rename",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Create or rename labels",
+      "summary": "Allow agents to create user labels and rename existing user labels, excluding system labels.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailWritePermissions",
+          "test_summary": "Verifies user label create/patch/update routes are allowed while system-label rename attempts and label deletion remain blocked.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Create or rename labels",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Create or rename labels.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_labels_delete",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Delete labels",
+      "summary": "Allow agents to permanently delete user labels, excluding system labels.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailWritePermissions",
+          "test_summary": "Verifies user label deletion is allowed while system-label deletion and label rename remain blocked.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Delete labels",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Delete labels.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_messages_delete",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Permanently delete emails",
+      "summary": "Allow agents to permanently delete emails without sending them to Trash.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailWritePermissions",
+          "test_summary": "Verifies permanent delete and batch-delete routes are allowed while Trash and email reads remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Permanently delete emails",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Permanently delete emails.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_messages_import",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Import emails",
+      "summary": "Allow agents to import or insert emails into the connected mailbox.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailWritePermissions",
+          "test_summary": "Verifies Gmail import and insert routes are allowed while send remains blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Import emails",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Import emails.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.gmail_watch_manage",
+      "kind": "policy_permission",
+      "group": "Gmail",
+      "name": "Manage change notifications",
+      "summary": "Allow agents to start or stop push notification watches.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineGmailWritePermissions",
+          "test_summary": "Verifies Gmail watch and stop routes are allowed while history reads remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Manage change notifications",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Manage change notifications.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.calendar_read",
+      "kind": "policy_permission",
+      "group": "Calendar",
+      "name": "Read calendars and events",
+      "summary": "Allow agents to list calendars and read calendar events without changing them.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineCalendarRead",
+          "test_summary": "Verifies Calendar read permission allows calendar list, calendar metadata, event read, instances, and free/busy routes while denying event creation.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Calendar read calendars and events",
+          "test_summary": "Reads calendar list entries, calendar metadata, events, event details, and free/busy data through the proxy, then verifies create attempts are denied.",
+          "test_script": "testing/scripts/calendar_read_events.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.calendar_events_create_self",
+      "kind": "policy_permission",
+      "group": "Calendar",
+      "name": "Create or import myself-only events",
+      "summary": "Allow agents to create or import new calendar events only when the request has no third-party attendees, no room/resource attendees, no additional guests, and no organizer or creator other than the connected user.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineCalendarEventCreateSplit",
+          "test_summary": "Verifies myself-only Calendar create/import permission allows solo events and denies third-party events.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Calendar create/import myself-only events",
+          "test_summary": "Creates and imports myself-only Calendar events through the proxy, verifies third-party create/import attempts are denied, then cleans up and restores policy assignment.",
+          "test_script": "testing/scripts/calendar_create_myself_only_events.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.calendar_events_create_guests",
+      "kind": "policy_permission",
+      "group": "Calendar",
+      "name": "Create or import events with third parties",
+      "summary": "Allow agents to create or import new calendar events that include third-party attendees, room/resource attendees, additional guests, or an organizer or creator other than the connected user.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineCalendarEventCreateSplit",
+          "test_summary": "Verifies third-party Calendar create/import permission allows guest/resource events and rejects myself-only events.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Calendar create/import events with third parties",
+          "test_summary": "Creates and imports third-party Calendar events through the proxy, verifies myself-only create/import attempts are denied, then cleans up and restores policy assignment.",
+          "test_script": "testing/scripts/calendar_create_events_with_third_parties.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.calendar_events_update_self",
+      "kind": "policy_permission",
+      "group": "Calendar",
+      "name": "Update existing myself-only events",
+      "summary": "Allow agents to update an existing calendar event only when both the existing event and the requested update have no third-party attendees, no room/resource attendees, no additional guests, and no organizer or creator other than the connected user.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineCalendarEventUpdateSplit",
+          "test_summary": "Verifies myself-only Calendar update permission allows solo event updates and denies requests or existing events involving third parties.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Calendar update existing myself-only events",
+          "test_summary": "Updates a myself-only Calendar event through the proxy, verifies guest additions and existing third-party event updates are denied, then cleans up and restores policy assignment.",
+          "test_script": "testing/scripts/calendar_update_myself_only_events.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.calendar_events_update_guests",
+      "kind": "policy_permission",
+      "group": "Calendar",
+      "name": "Update or move events with third parties",
+      "summary": "Allow agents to update calendar events involving third parties and to move events between calendars. Move operations are treated as third-party-level changes.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineCalendarEventUpdateSplit",
+          "test_summary": "Verifies third-party Calendar update/move permission allows guest/resource event updates and move operations.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Calendar update or move events with third parties",
+          "test_summary": "Updates third-party Calendar events and verifies the move route is policy-forwarded, while myself-only updates are denied.",
+          "test_script": "testing/scripts/calendar_update_events_with_third_parties.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.calendar_events_delete_self",
+      "kind": "policy_permission",
+      "group": "Calendar",
+      "name": "Delete existing myself-only events",
+      "summary": "Allow agents to delete an existing calendar event only when it has no third-party attendees, no room/resource attendees, no additional guests, and no organizer or creator other than the connected user.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineCalendarEventDeleteSplit",
+          "test_summary": "Verifies myself-only Calendar delete permission allows solo event deletion and denies events involving third parties.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Calendar delete existing myself-only events",
+          "test_summary": "Deletes a myself-only Calendar event through the proxy and verifies third-party event deletion is denied.",
+          "test_script": "testing/scripts/calendar_delete_myself_only_events.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.calendar_events_delete_guests",
+      "kind": "policy_permission",
+      "group": "Calendar",
+      "name": "Delete events with third parties",
+      "summary": "Allow agents to delete existing calendar events that include third-party attendees, room/resource attendees, additional guests, or an organizer or creator other than the connected user.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineCalendarEventDeleteSplit",
+          "test_summary": "Verifies third-party Calendar delete permission allows guest/resource event deletion and rejects myself-only event deletion.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Calendar delete events with third parties",
+          "test_summary": "Deletes a third-party Calendar event through the proxy and verifies myself-only event deletion is denied.",
+          "test_script": "testing/scripts/calendar_delete_events_with_third_parties.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.calendar_calendars_manage",
+      "kind": "policy_permission",
+      "group": "Calendar",
+      "name": "Manage calendars and calendar lists",
+      "summary": "Allow agents to create, update, clear, or delete calendars and calendar list entries.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineCalendarOperations",
+          "test_summary": "Verifies Calendar and calendar-list management routes are allowed while read routes remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Calendar manage calendars and calendar lists",
+          "test_summary": "Creates, patches, updates, and deletes a disposable Calendar through the proxy, while verifying calendar clear and calendar-list management routes are policy-forwarded.",
+          "test_script": "testing/scripts/calendar_manage_calendars_and_lists.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.calendar_access_read",
+      "kind": "policy_permission",
+      "group": "Calendar",
+      "name": "Read calendar sharing",
+      "summary": "Allow agents to read calendar sharing rules without changing them.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineCalendarOperations",
+          "test_summary": "Verifies Calendar sharing read routes are allowed while sharing write routes remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Calendar read calendar sharing",
+          "test_summary": "Reads ACL list and ACL rule details for a disposable Calendar through the proxy, then verifies ACL creation is denied.",
+          "test_script": "testing/scripts/calendar_read_sharing.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.calendar_access_manage",
+      "kind": "policy_permission",
+      "group": "Calendar",
+      "name": "Manage calendar sharing",
+      "summary": "Allow agents to create, update, delete, or watch calendar sharing rules.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineCalendarOperations",
+          "test_summary": "Verifies Calendar sharing management routes are allowed while sharing read routes remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Calendar manage calendar sharing",
+          "test_summary": "Creates, patches, updates, forwards watch for, and deletes an ACL rule on a disposable Calendar through the proxy.",
+          "test_script": "testing/scripts/calendar_manage_sharing.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.calendar_settings_read",
+      "kind": "policy_permission",
+      "group": "Calendar",
+      "name": "Read Calendar settings",
+      "summary": "Allow agents to read Google Calendar user settings.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineCalendarOperations",
+          "test_summary": "Verifies Calendar settings read routes are allowed while Calendar write routes remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Calendar read Calendar settings",
+          "test_summary": "Reads Calendar settings list and timezone setting through the proxy, then verifies event creation is denied.",
+          "test_script": "testing/scripts/calendar_read_settings.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_files_read",
+      "kind": "policy_permission",
+      "group": "Files",
+      "name": "Read non-Google-native files",
+      "summary": "Allow agents to read metadata and download non-Google-native files inside allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveFilesRead",
+          "test_summary": "Verifies non-Google-native file read routes are allowed while search, export, Google-native files, create, copy, edit, upload, delete, and empty-trash routes are denied.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live read non-Google-native files",
+          "test_summary": "Reads metadata and downloads a non-Google-native file through the proxy, then verifies search, about, create, update, and delete are denied.",
+          "test_script": "testing/scripts/drive_files_read.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_files_create",
+      "kind": "policy_permission",
+      "group": "Files",
+      "name": "Create non-Google-native files",
+      "summary": "Allow agents to create or copy non-Google-native files inside allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveFilesWriteUsesNonGoogleNativeFiles",
+          "test_summary": "Verifies file create/copy allows non-Google-native files and rejects Google-native Docs.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Create non-Google-native files",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Create non-Google-native files.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_files_update",
+      "kind": "policy_permission",
+      "group": "Files",
+      "name": "Edit non-Google-native files",
+      "summary": "Allow agents to rename, update metadata, or upload new content for non-Google-native files in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveFilesWriteUsesNonGoogleNativeFiles",
+          "test_summary": "Verifies file update/upload allows non-Google-native files and rejects Google-native Docs.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Edit non-Google-native files",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Edit non-Google-native files.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_files_delete",
+      "kind": "policy_permission",
+      "group": "Files",
+      "name": "Delete non-Google-native files",
+      "summary": "Allow agents to permanently delete non-Google-native files in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveFilesWriteUsesNonGoogleNativeFiles",
+          "test_summary": "Verifies file delete allows non-Google-native files and rejects Google-native Docs and empty-trash.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Delete non-Google-native files",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Delete non-Google-native files.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_permissions_read",
+      "kind": "policy_permission",
+      "group": "Files",
+      "name": "Read sharing",
+      "summary": "Allow agents to read file permissions without changing them.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveSharingPermissions",
+          "test_summary": "Verifies permission list/get routes are allowed while permission writes remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Read sharing",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Read sharing.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_permissions_manage",
+      "kind": "policy_permission",
+      "group": "Files",
+      "name": "Manage sharing",
+      "summary": "Allow agents to create, update, or delete file permissions.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveSharingPermissions",
+          "test_summary": "Verifies permission create/patch/update/delete routes are allowed while permission reads remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Manage sharing",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Manage sharing.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_comments_read",
+      "kind": "policy_permission",
+      "group": "Comments",
+      "name": "Read comments",
+      "summary": "Allow agents to read file comments and replies without changing them.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveCommentsRead",
+          "test_summary": "Verifies comment and reply list/get routes are allowed while comment and reply create, update, patch, and delete routes are denied.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Drive read comments",
+          "test_summary": "Reads comments and replies on a disposable Doc through the proxy, then verifies comment and reply mutations are denied.",
+          "test_script": "testing/scripts/drive_comments_read.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_comments_create",
+      "kind": "policy_permission",
+      "group": "Comments",
+      "name": "Create comments",
+      "summary": "Allow agents to create new comments on files in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveCommentsWriteSplit",
+          "test_summary": "Verifies comment create permission allows only top-level comment creation and does not grant reply, resolve, update, or delete permissions.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Create comments",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Create comments.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_comments_reply",
+      "kind": "policy_permission",
+      "group": "Comments",
+      "name": "Reply to comments",
+      "summary": "Allow agents to add normal replies to existing file comments.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveCommentsWriteSplit",
+          "test_summary": "Verifies comment reply permission allows normal replies and rejects resolve actions.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Reply to comments",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Reply to comments.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_comments_resolve",
+      "kind": "policy_permission",
+      "group": "Comments",
+      "name": "Resolve comments",
+      "summary": "Allow agents to resolve comment discussions by posting a resolving reply.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveCommentsWriteSplit",
+          "test_summary": "Verifies comment resolve permission allows resolving replies and rejects normal replies.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Resolve comments",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Resolve comments.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_comments_update",
+      "kind": "policy_permission",
+      "group": "Comments",
+      "name": "Update own comments and replies",
+      "summary": "Allow agents to update only comments and replies authored by the connected user.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveCommentsWriteSplit",
+          "test_summary": "Verifies comment update permission requires proxy ownership inspection before updating comments or replies.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Update own comments and replies",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Update own comments and replies.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_comments_delete",
+      "kind": "policy_permission",
+      "group": "Comments",
+      "name": "Delete own comments and replies",
+      "summary": "Allow agents to delete only comments and replies authored by the connected user.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveCommentsWriteSplit",
+          "test_summary": "Verifies comment delete permission requires proxy ownership inspection before deleting comments or replies.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Delete own comments and replies",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Delete own comments and replies.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_metadata_read",
+      "kind": "policy_permission",
+      "group": "Files",
+      "name": "Read metadata",
+      "summary": "Allow agents to read file search metadata, account info, changes, shared drives, apps, file labels, and file revisions.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveMetadataRead",
+          "test_summary": "Verifies file search metadata, about, changes, shared drives, apps, file labels, and revision read routes are allowed while adjacent file content and metadata management routes are denied.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Drive read metadata",
+          "test_summary": "Reads file search metadata, about, changes, shared drives, apps, file labels, and file revisions through the proxy, then verifies metadata management routes are denied.",
+          "test_script": "testing/scripts/drive_metadata_read.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_labels_update",
+      "kind": "policy_permission",
+      "group": "Files",
+      "name": "Update labels",
+      "summary": "Allow agents to apply, update, or remove labels on files.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveMetadataWriteSplit",
+          "test_summary": "Verifies label updates are allowed independently while drive-management changes and revision deletion remain denied.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Update labels",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Update labels.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.drive_revisions_delete",
+      "kind": "policy_permission",
+      "group": "Files",
+      "name": "Delete revisions",
+      "summary": "Allow agents to permanently delete file revisions where Google permits it.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveMetadataWriteSplit",
+          "test_summary": "Verifies revision deletion is allowed independently while revision metadata updates, label changes, and drive-management changes remain denied.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Delete revisions",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Delete revisions.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.docs_read",
+      "kind": "policy_permission",
+      "group": "Docs",
+      "name": "Read Google Docs",
+      "summary": "Allow agents to read Google Docs documents located in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveDocsOperations",
+          "test_summary": "Verifies Docs read and export routes are allowed while Docs create, edit, and delete routes are denied.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Docs read",
+          "test_summary": "Reads a disposable Google Doc through the proxy, then verifies Docs create and edit routes are denied.",
+          "test_script": "testing/scripts/docs_read.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.docs_create",
+      "kind": "policy_permission",
+      "group": "Docs",
+      "name": "Create Google Docs",
+      "summary": "Allow agents to create Google Docs documents in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveDocsOperations",
+          "test_summary": "Verifies Docs create routes are allowed while Docs read and edit routes are denied.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Docs create",
+          "test_summary": "Creates a Google Doc in the selected allowed Drive folder through the proxy, then verifies Docs read and edit routes are denied.",
+          "test_script": "testing/scripts/docs_create.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.docs_edit",
+      "kind": "policy_permission",
+      "group": "Docs",
+      "name": "Edit Google Docs",
+      "summary": "Allow agents to modify Google Docs documents in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveDocsOperations",
+          "test_summary": "Verifies Docs batch-update routes are allowed while Docs read and create routes are denied.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Docs edit",
+          "test_summary": "Edits a disposable Google Doc through the proxy, then verifies Docs read and create routes are denied.",
+          "test_script": "testing/scripts/docs_edit.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.docs_delete",
+      "kind": "policy_permission",
+      "group": "Docs",
+      "name": "Delete Google Docs",
+      "summary": "Allow agents to permanently delete Google Docs documents in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineDriveDocsOperations",
+          "test_summary": "Verifies Google Docs delete allows deleting Docs through the Drive file endpoint while rejecting Sheets.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Delete Google Docs",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Delete Google Docs.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.sheets_read",
+      "kind": "policy_permission",
+      "group": "Sheets",
+      "name": "Read Google Sheets",
+      "summary": "Allow agents to read Google Sheets spreadsheets and cell values in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineStructuredFileNativeDriveRoutes",
+          "test_summary": "Verifies Google Sheets read allows Sheets export through the Drive file endpoint while rejecting Docs.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Read Google Sheets",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Read Google Sheets.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.sheets_create",
+      "kind": "policy_permission",
+      "group": "Sheets",
+      "name": "Create Google Sheets",
+      "summary": "Allow agents to create Google Sheets spreadsheets in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineSheetsCreateAndEdit",
+          "test_summary": "Verifies Sheets create is allowed while Sheets read and edit routes remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Create Google Sheets",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Create Google Sheets.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.sheets_edit",
+      "kind": "policy_permission",
+      "group": "Sheets",
+      "name": "Edit Google Sheets",
+      "summary": "Allow agents to update spreadsheet structure, metadata, and cell values in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineSheetsCreateAndEdit",
+          "test_summary": "Verifies Sheets batch update, values update/append/clear, and copy-to routes are allowed while Sheets read and create routes remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Edit Google Sheets",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Edit Google Sheets.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.sheets_delete",
+      "kind": "policy_permission",
+      "group": "Sheets",
+      "name": "Delete Google Sheets",
+      "summary": "Allow agents to permanently delete Google Sheets spreadsheets in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineStructuredFileNativeDriveRoutes",
+          "test_summary": "Verifies Google Sheets delete allows deleting Sheets through the Drive file endpoint while rejecting Slides.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Delete Google Sheets",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Delete Google Sheets.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.slides_read",
+      "kind": "policy_permission",
+      "group": "Slides",
+      "name": "Read Google Slides",
+      "summary": "Allow agents to read Google Slides presentations and pages in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineStructuredFileNativeDriveRoutes",
+          "test_summary": "Verifies Google Slides read allows Slides export through the Drive file endpoint while rejecting Sheets.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Read Google Slides",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Read Google Slides.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.slides_create",
+      "kind": "policy_permission",
+      "group": "Slides",
+      "name": "Create Google Slides",
+      "summary": "Allow agents to create Google Slides presentations in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineSlidesCreateAndEdit",
+          "test_summary": "Verifies Slides create is allowed while Slides read and edit routes remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Create Google Slides",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Create Google Slides.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.slides_edit",
+      "kind": "policy_permission",
+      "group": "Slides",
+      "name": "Edit Google Slides",
+      "summary": "Allow agents to modify Google Slides presentations in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineSlidesCreateAndEdit",
+          "test_summary": "Verifies Slides batch update is allowed while Slides read and create routes remain blocked unless separately permitted.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Edit Google Slides",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Edit Google Slides.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    },
+    {
+      "id": "policy.slides_delete",
+      "kind": "policy_permission",
+      "group": "Slides",
+      "name": "Delete Google Slides",
+      "summary": "Allow agents to permanently delete Google Slides presentations in allowed folders.",
+      "tests": [
+        {
+          "test_name": "TestPolicyEngineStructuredFileNativeDriveRoutes",
+          "test_summary": "Verifies Google Slides delete allows deleting Slides through the file endpoint while rejecting non-Google-native files.",
+          "test_script": "src/policy_test.go"
+        },
+        {
+          "test_name": "Live Delete Google Slides",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Delete Google Slides.",
+          "test_script": "testing/scripts/policy_permission_live.py",
+          "live": true
+        }
+      ]
+    }
+  ]
+}
