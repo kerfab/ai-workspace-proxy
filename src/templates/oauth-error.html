@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>{{.AppName}}</title>
+<link rel="icon" href="/static/brand/favicon.ico" sizes="any">
+<link rel="stylesheet" href="/static/auth.css">
+</head><body>
+<h1>{{.AppName}}</h1>
+<div class="card">
+  <h2>{{.Title}}</h2>
+  <div class="flash flash-error"><span>{{.Message}}</span></div>
+  <p>{{.Explanation}}</p>
+  <ul>
+    {{range .PossibleCauses}}<li>{{.}}</li>{{end}}
+  </ul>
+  <p>Please return to the home page and start the sign-in process again.</p>
+  <a class="btn" href="/">Back to home</a>
+</div>
+</body></html>

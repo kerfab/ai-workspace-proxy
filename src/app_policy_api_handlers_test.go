@@ -1,3 +1,8 @@
+// Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+// Proprietary software. No use, copy, modification, distribution, disclosure,
+// or reverse engineering is permitted without prior written authorization
+// from Opensense Ltd.
+
 package main
 
 import (
@@ -53,18 +58,14 @@ func TestUserPolicyAPICreateUpdateApplyDelete(t *testing.T) {
 	if settings.DefaultPolicyID != policyID {
 		t.Fatalf("default policy = %q, want %q", settings.DefaultPolicyID, policyID)
 	}
-
-	applyWorkspaceResp := policyAPIRequest(t, app, http.MethodPost, "/api/user/policies/system/apply", backendToken, `{"workspace":"workspace@example.com"}`)
-	if applyWorkspaceResp.Code != http.StatusOK {
-		t.Fatalf("apply workspace system failed with %d: %s", applyWorkspaceResp.Code, applyWorkspaceResp.Body.String())
-	}
-	conn, err := store.GetGmailConnection("usr_test", "workspace@example.com")
-	if err != nil {
+	if err := store.SaveAgentWorkspaceGrants("usr_test", "agt_test_standard", []AgentWorkspaceGrant{
+		{AgentID: "agt_test_standard", UserID: "usr_test", MailboxEmail: "workspace@example.com", PolicyID: policyID},
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if conn.PolicyID != systemPolicyID {
-		t.Fatalf("workspace policy = %q, want %q", conn.PolicyID, systemPolicyID)
-	}
+
+	applyWorkspaceResp := policyAPIRequest(t, app, http.MethodPost, "/api/user/policies/system/apply", backendToken, `{"workspace":"workspace@example.com"}`)
+	assertPolicyAPIError(t, applyWorkspaceResp, http.StatusBadRequest, "workspace_policy_deprecated")
 
 	deleteResp := policyAPIRequest(t, app, http.MethodDelete, "/api/user/policies/"+policyID, backendToken, "")
 	if deleteResp.Code != http.StatusOK {
@@ -76,6 +77,13 @@ func TestUserPolicyAPICreateUpdateApplyDelete(t *testing.T) {
 	}
 	if settings.DefaultPolicyID != systemPolicyID {
 		t.Fatalf("default policy after delete = %q, want %q", settings.DefaultPolicyID, systemPolicyID)
+	}
+	grant, err := store.GetAgentWorkspaceGrant("usr_test", "agt_test_standard", "workspace@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant == nil || grant.PolicyID != systemPolicyID {
+		t.Fatalf("agent grant policy after delete = %+v, want system", grant)
 	}
 }
 
@@ -111,6 +119,89 @@ func TestUserPolicyAPISystemPolicyIsImmutableButApplyable(t *testing.T) {
 	}
 }
 
+func TestPolicyEditorViewDefaultsToSavedCustomPolicy(t *testing.T) {
+	app, store, _, _ := newPolicyAPITestApp(t)
+
+	policy := &UserPolicy{
+		UserID:              "usr_test",
+		Name:                "Custom default policy",
+		EnabledCapabilities: []string{"gmail_messages_read"},
+	}
+	if err := store.SaveUserPolicy(policy); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveDefaultPolicyID("usr_test", policy.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/policies", nil)
+	view := app.policyEditorView("usr_test", req)
+
+	if got := view["SelectedID"]; got != policy.ID {
+		t.Fatalf("selected policy id = %v, want %q", got, policy.ID)
+	}
+	if got := view["SelectedName"]; got != policy.Name {
+		t.Fatalf("selected policy name = %v, want %q", got, policy.Name)
+	}
+	if got := view["SelectedIsDefault"]; got != true {
+		t.Fatalf("selected policy default flag = %v, want true", got)
+	}
+
+	options, ok := view["Options"].([]map[string]any)
+	if !ok {
+		t.Fatalf("options type = %T, want []map[string]any", view["Options"])
+	}
+	foundSelected := false
+	for _, option := range options {
+		if option["ID"] == policy.ID {
+			if option["Selected"] != true {
+				t.Fatalf("custom default option selected = %v, want true", option["Selected"])
+			}
+			foundSelected = true
+		}
+	}
+	if !foundSelected {
+		t.Fatalf("did not find custom default policy option %q", policy.ID)
+	}
+	if len(options) < 2 {
+		t.Fatalf("expected at least 2 options, got %d", len(options))
+	}
+	if got := options[0]["ID"]; got != policy.ID {
+		t.Fatalf("first option id = %v, want %q", got, policy.ID)
+	}
+	if got := options[1]["ID"]; got != systemPolicyID {
+		t.Fatalf("second option id = %v, want %q", got, systemPolicyID)
+	}
+}
+
+func TestPolicyOptionsForUserOrdersRemainingCustomPoliciesAlphabetically(t *testing.T) {
+	app, store, _, _ := newPolicyAPITestApp(t)
+	userID := "usr_test"
+	for _, policy := range []*UserPolicy{
+		{ID: "pol_zulu", UserID: userID, Name: "Zulu", EnabledCapabilities: []string{"gmail_messages_read"}},
+		{ID: "pol_alpha", UserID: userID, Name: "Alpha", EnabledCapabilities: []string{"gmail_messages_read"}},
+		{ID: "pol_beta", UserID: userID, Name: "beta", EnabledCapabilities: []string{"gmail_messages_read"}},
+	} {
+		if err := store.SaveUserPolicy(policy); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.SaveDefaultPolicyID(userID, "pol_beta"); err != nil {
+		t.Fatal(err)
+	}
+
+	options := app.policyOptionsForUser(userID, "pol_beta")
+	if len(options) != 4 {
+		t.Fatalf("options length = %d, want 4", len(options))
+	}
+	want := []string{"pol_beta", systemPolicyID, "pol_alpha", "pol_zulu"}
+	for i, wantID := range want {
+		if got := options[i]["ID"]; got != wantID {
+			t.Fatalf("option %d id = %v, want %q", i, got, wantID)
+		}
+	}
+}
+
 func newPolicyAPITestApp(t *testing.T) (*App, *Store, string, string) {
 	t.Helper()
 	db, err := OpenSQLite(filepath.Join(t.TempDir(), "test.sqlite3"))
@@ -136,12 +227,20 @@ func newPolicyAPITestApp(t *testing.T) (*App, *Store, string, string) {
 	}
 
 	crypto := NewCrypto([]byte("12345678901234567890123456789012"))
-	standardToken := "ptk_test_standard"
+	standardToken := "atk_test_standard"
 	standardEnc, err := crypto.Encrypt(standardToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveProxyToken(user.ID, standardEnc, "ptk_test..."); err != nil {
+	if err := store.SaveAgent(&AgentAccess{
+		ID:              "agt_test_standard",
+		UserID:          user.ID,
+		FriendlyName:    "Test agent",
+		DefaultLocation: "test suite",
+		TokenEnc:        standardEnc,
+		TokenHint:       "atk_test...",
+		Enabled:         true,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	backendToken := "ubk_test_backend"
@@ -166,7 +265,7 @@ func newPolicyAPITestApp(t *testing.T) (*App, *Store, string, string) {
 	app := NewApp(&Config{
 		BaseURL:             "http://localhost:8080",
 		MaxRequestBodyBytes: 1 << 20,
-	}, store, crypto, nil)
+	}, store, crypto)
 	return app, store, standardToken, backendToken
 }
 

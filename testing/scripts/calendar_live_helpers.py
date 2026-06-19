@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+# Proprietary software. No use, copy, modification, distribution, disclosure,
+# or reverse engineering is permitted without prior written authorization
+# from Opensense Ltd.
+
 import argparse
 import json
 import os
@@ -44,7 +49,7 @@ class LiveCalendarTest:
         self.cleanup_policy_id = ""
 
     def run(self, scenario):
-        self.original_policy_id = self.workspace_policy_id()
+        self.original_policy_id = self.agent_grant_policy_id()
         print(f"Workspace: {self.cfg['workspace']}")
         print(f"Calendar: {self.cfg['calendar_id']}")
         print(f"Original policy: {self.original_policy_id}")
@@ -72,16 +77,16 @@ class LiveCalendarTest:
         return policy_id
 
     def apply_policy(self, policy_id):
-        apply_policy_to_workspace(self.cfg, policy_id)
+        apply_policy_to_agent_grant(self.cfg, policy_id)
         print(f"Applied temporary policy: {policy_id}")
 
-    def workspace_policy_id(self):
+    def agent_grant_policy_id(self):
         query = urlencode({"workspace": self.cfg["workspace"]})
-        _, payload = backend_json(self.cfg, "GET", f"/api/user/workspaces?{query}")
-        workspace = payload.get("workspace")
-        if not isinstance(workspace, dict):
-            raise TestFailure("Workspace lookup response did not contain a workspace object")
-        policy_id = str(workspace.get("policy_id") or "system").strip()
+        _, payload = backend_json(self.cfg, "GET", f"/api/user/agents/{quote(self.cfg['agent_id'], safe='')}/grants?{query}")
+        grant = payload.get("grant")
+        if not isinstance(grant, dict):
+            raise TestFailure("Agent grant lookup response did not contain a grant object")
+        policy_id = str(grant.get("policy_id") or "system").strip()
         return policy_id or "system"
 
     def create_event(self, body):
@@ -288,7 +293,7 @@ class LiveCalendarTest:
         self.created_calendars = []
         if self.original_policy_id:
             try:
-                apply_policy_to_workspace(self.cfg, self.original_policy_id)
+                apply_policy_to_agent_grant(self.cfg, self.original_policy_id)
                 print(f"Restored original policy: {self.original_policy_id}")
             except Exception as exc:
                 print(f"WARN: could not restore original policy {self.original_policy_id}: {exc}", file=sys.stderr)
@@ -318,15 +323,18 @@ def load_test_config(args):
         value(user_config, "proxy_url"),
         value(legacy_config, "proxy_url"),
     )
-    proxy_token = first_non_empty(
-        os.environ.get("AIWP_TEST_PROXY_TOKEN"),
-        value(agent_config, "proxy_token"),
-        value(legacy_config, "proxy_token"),
+    agent_token = first_non_empty(
+        os.environ.get("AIWP_TEST_AGENT_API_TOKEN"),
+        value(agent_config, "agent_api_token"),
     )
     backend_token = first_non_empty(
         os.environ.get("AIWP_TEST_USER_BACKEND_API_TOKEN"),
         value(user_config, "user_backend_api_token"),
         value(legacy_config, "user_backend_api_token"),
+    )
+    agent_id = first_non_empty(
+        os.environ.get("AIWP_TEST_AGENT_ID"),
+        value(agent_config, "agent_id"),
     )
     workspace = first_non_empty(
         os.environ.get("AIWP_TEST_WORKSPACE"),
@@ -346,8 +354,10 @@ def load_test_config(args):
     missing = []
     if not proxy_url:
         missing.append("proxy_url / AIWP_TEST_BASE_URL")
-    if not proxy_token:
-        missing.append("proxy_token / AIWP_TEST_PROXY_TOKEN")
+    if not agent_token:
+        missing.append("agent_api_token / AIWP_TEST_AGENT_API_TOKEN")
+    if not agent_id:
+        missing.append("agent_id / AIWP_TEST_AGENT_ID")
     if not backend_token:
         missing.append("user_backend_api_token / AIWP_TEST_USER_BACKEND_API_TOKEN")
     if not workspace:
@@ -357,8 +367,9 @@ def load_test_config(args):
 
     return {
         "proxy_url": proxy_url.rstrip("/"),
-        "proxy_token": proxy_token,
+        "agent_token": agent_token,
         "backend_token": backend_token,
+        "agent_id": agent_id,
         "workspace": workspace,
         "calendar_id": calendar_id,
         "third_party_email": third_party_email,
@@ -466,7 +477,7 @@ def backend_json(cfg, method, path, body=None, expect_status=None):
 
 
 def agent_json(cfg, method, path, body=None, expect_status=None):
-    return request_json(cfg["proxy_url"], method, path, cfg["proxy_token"], body, expect_status)
+    return request_json(cfg["proxy_url"], method, path, cfg["agent_token"], body, expect_status)
 
 
 def create_policy(cfg, name, capabilities):
@@ -480,10 +491,10 @@ def create_policy(cfg, name, capabilities):
     return str(policy["id"])
 
 
-def apply_policy_to_workspace(cfg, policy_id):
-    encoded = quote(policy_id, safe="")
-    backend_json(cfg, "POST", f"/api/user/policies/{encoded}/apply", {
+def apply_policy_to_agent_grant(cfg, policy_id):
+    backend_json(cfg, "PUT", f"/api/user/agents/{quote(cfg['agent_id'], safe='')}/grants", {
         "workspace": cfg["workspace"],
+        "policy_id": policy_id,
     })
 
 

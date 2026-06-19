@@ -1,3 +1,8 @@
+// Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+// Proprietary software. No use, copy, modification, distribution, disclosure,
+// or reverse engineering is permitted without prior written authorization
+// from Opensense Ltd.
+
 package main
 
 import (
@@ -220,4 +225,24 @@ func (a *App) resolveReferenceFolders(userID, mailboxEmail string, refName strin
 		}
 	}
 	return nil, nil, fmt.Errorf("unknown Drive Reference Name")
+}
+
+func (a *App) resolveAgentReferenceFolders(userID, agentID, mailboxEmail string, refName string) ([]AllowedDriveFolder, *AllowedDriveFolder, error) {
+	folders, err := a.store.ListAgentAllowedDriveFolderRefs(userID, agentID, mailboxEmail)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(folders) == 0 {
+		return nil, nil, fmt.Errorf("no allowed Drive folders configured for this agent")
+	}
+	if refName == "" {
+		return folders, nil, nil
+	}
+	for _, f := range folders {
+		if strings.EqualFold(f.ReferenceName, refName) || f.ReferenceKey == normalizeReferenceKey(refName) {
+			copy := f
+			return []AllowedDriveFolder{f}, &copy, nil
+		}
+	}
+	return nil, nil, fmt.Errorf("agent is not allowed to access this Drive Reference Name")
 }

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+// Proprietary software. No use, copy, modification, distribution, disclosure,
+// or reverse engineering is permitted without prior written authorization
+// from Opensense Ltd.
+
 package main
 
 import (
@@ -42,7 +47,7 @@ func parseDriveFolderLink(raw string) (string, string, error) {
 	if resourceKey == "" {
 		resourceKey = u.Query().Get("resourceKey")
 	}
-	re := regexp.MustCompile(`/folders/([a-zA-Z0-9_-]+)`)
+	re := regexp.MustCompile(`(?i)/folders/([a-zA-Z0-9_-]+)`)
 	if m := re.FindStringSubmatch(u.Path); len(m) == 2 {
 		return m[1], resourceKey, nil
 	}
@@ -50,9 +55,6 @@ func parseDriveFolderLink(raw string) (string, string, error) {
 		return id, resourceKey, nil
 	}
 	return "", "", fmt.Errorf("unable to extract folder id from link")
-}
-func allowedKindsFromFolder(f *AllowedDriveFolder) map[string]bool {
-	return map[string]bool{"docs": f.AllowDocs, "sheets": f.AllowSheets, "slides": f.AllowSlides, "drive": f.AllowDriveFiles}
 }
 func detectFileKindFromMime(mime string) string {
 	switch mime {
@@ -82,18 +84,6 @@ func drivePolicyKindFromMime(mime string) string {
 			return "google_native"
 		}
 		return "drive"
-	}
-}
-func kindAllowedInFolder(f *AllowedDriveFolder, kind string) bool {
-	switch kind {
-	case "docs":
-		return f.AllowDocs
-	case "sheets":
-		return f.AllowSheets
-	case "slides":
-		return f.AllowSlides
-	default:
-		return f.AllowDriveFiles
 	}
 }
 func buildFolderQueryClause(folderIDs []string) string {

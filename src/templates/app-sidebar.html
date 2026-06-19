@@ -1,0 +1,148 @@
+{{define "app-sidebar"}}
+<template data-aiwp-fragment="sidebar:start"></template>
+<aside class="sidebar">
+  {{if .AdminMode}}
+  <div class="sidebar-section">
+    <p class="sidebar-label">Admin Mode</p>
+    <div class="sidebar-nav">
+      <a class="workspace-link admin-return-link" href="/">
+        <span class="sidebar-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M10 6l-6 6 6 6"></path><path d="M4 12h13"></path><path d="M17 5v14"></path></svg></span>
+        <span class="sidebar-entry-copy">
+          <strong class="truncate">Return to user mode</strong>
+        </span>
+      </a>
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <p class="sidebar-label">Overview</p>
+    <div class="sidebar-nav">
+      <a class="workspace-link admin-nav-link {{if eq .ActiveSection "admin"}}active{{end}}" href="/admin/">
+        <span class="sidebar-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M3 11.5L12 4l9 7.5"></path><path d="M6 10.5V20h12v-9.5"></path><path d="M10 20v-5h4v5"></path></svg></span>
+        <span class="sidebar-entry-copy">
+          {{if .OrganizationAdmin.Verified}}
+          <strong class="truncate">Dashboard</strong>
+          {{else}}
+          <strong class="truncate">Claim administration</strong>
+          {{end}}
+        </span>
+      </a>
+    </div>
+  </div>
+  {{if .OrganizationAdmin.Verified}}
+  <div class="sidebar-section">
+    <p class="sidebar-label">User management</p>
+    <div class="sidebar-nav">
+      <a class="workspace-link admin-nav-link {{if eq .ActiveSection "admin_users"}}active{{end}}" href="/admin/users">
+        <span class="sidebar-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><circle cx="9" cy="8" r="3"></circle><path d="M4 18c0-3 2.5-5 5-5s5 2 5 5"></path><path d="M17 8h3"></path><path d="M17 12h3"></path><path d="M17 16h3"></path></svg></span>
+        <span class="sidebar-entry-copy">
+          <strong class="truncate">Manage accounts</strong>
+        </span>
+      </a>
+      <a class="workspace-link admin-nav-link {{if eq .ActiveSection "admin_accounts_policy"}}active{{end}}" href="/admin/accounts-policy">
+        <span class="sidebar-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M5 5h14v14H5z"></path><path d="M8 9h8"></path><path d="M8 13h5"></path><path d="M16 13l1.5 1.5L20 12"></path></svg></span>
+        <span class="sidebar-entry-copy">
+          <strong class="truncate">Accounts Policy</strong>
+        </span>
+      </a>
+    </div>
+  </div>
+  {{end}}
+  {{else}}
+  {{if .CanAccessOrganizationAdmin}}
+  <div class="sidebar-section">
+    <p class="sidebar-label">Organization</p>
+    <div class="sidebar-nav">
+      <a class="workspace-link org-admin-link" href="/admin/">
+        <span class="sidebar-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M12 3l7 3v5c0 5-3.2 8.2-7 10-3.8-1.8-7-5-7-10V6l7-3z"></path><path d="M9 12l2 2 4-4"></path></svg></span>
+        <span class="sidebar-entry-copy">
+          <strong class="truncate">Organization Admin</strong>
+        </span>
+      </a>
+    </div>
+  </div>
+  {{end}}
+  <div class="sidebar-section">
+    <p class="sidebar-label">Overview</p>
+    <div class="sidebar-nav">
+      <a class="workspace-link {{if eq .ActiveSection "dashboard"}}active{{end}}" href="/">
+        <span class="sidebar-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M3 11.5L12 4l9 7.5"></path><path d="M6 10.5V20h12v-9.5"></path><path d="M10 20v-5h4v5"></path></svg></span>
+        <span class="sidebar-entry-copy">
+          <strong class="truncate">Dashboard</strong>
+        </span>
+      </a>
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <p class="sidebar-label">Connected workspaces</p>
+    {{if .Workspaces}}
+    <div id="workspaceList" class="workspace-list">
+      {{range .Workspaces}}
+        <a class="workspace-link {{if .Active}}active{{end}}" href="/?workspace={{.Email}}" draggable="true" data-workspace-email="{{.Email}}">
+          <span class="sidebar-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M4 8l8 5 8-5"></path></svg></span>
+          <span class="sidebar-entry-copy">
+            <strong class="truncate" data-workspace-name="{{.Email}}">{{.Name}}</strong>
+          </span>
+        </a>
+      {{end}}
+    </div>
+    {{end}}
+    <a class="btn sidebar-connect" href="/auth/workspace/connect"><span class="sidebar-button-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v8"></path><path d="M8 12h8"></path></svg></span><span>Add a Google account</span></a>
+  </div>
+  <div class="sidebar-section">
+    <p class="sidebar-label">AI Agents Profiles &amp; Accesses</p>
+    <div class="sidebar-nav workspace-list">
+      {{range .Agents}}
+        <a id="agentNav_{{.ID}}" class="workspace-link {{if .Active}}active{{end}}" href="/agents?agent={{.ID}}">
+          <span class="sidebar-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><rect x="7" y="8" width="10" height="8" rx="2"></rect><path d="M12 4v2"></path><path d="M9 16v2"></path><path d="M15 16v2"></path><path d="M5 10v4"></path><path d="M19 10v4"></path><circle cx="10" cy="12" r="1"></circle><circle cx="14" cy="12" r="1"></circle></svg></span>
+          <span class="sidebar-entry-copy">
+            <strong id="agentNavName_{{.ID}}" class="truncate">{{.Name}}</strong>
+          </span>
+          <span id="agentSkillStaleBadge_{{.ID}}" class="agent-skill-stale-badge" title="Agent skill update needed" aria-label="Agent skill update needed" {{if not .SkillStale}}hidden{{end}}>!</span>
+        </a>
+      {{end}}
+    </div>
+    <button class="btn sidebar-connect" type="button" onclick="return showAgentCreateOverlay()"><span class="sidebar-button-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v8"></path><path d="M8 12h8"></path></svg></span><span>Create an agent profile</span></button>
+  </div>
+  <div class="sidebar-section">
+    <p class="sidebar-label">Permissions</p>
+    <div class="sidebar-nav">
+      <a class="workspace-link {{if eq .ActiveSection "policies"}}active{{end}}" href="/policies">
+        <span class="sidebar-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M4 7h10"></path><path d="M18 7h2"></path><circle cx="16" cy="7" r="2"></circle><path d="M4 12h2"></path><path d="M10 12h10"></path><circle cx="8" cy="12" r="2"></circle><path d="M4 17h10"></path><path d="M18 17h2"></path><circle cx="16" cy="17" r="2"></circle></svg></span>
+        <span class="sidebar-entry-copy">
+          <strong class="truncate">Permissions editor</strong>
+        </span>
+      </a>
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <p class="sidebar-label">Logs</p>
+    <div class="sidebar-nav">
+      <a class="workspace-link {{if eq .ActiveSection "logs"}}active{{end}}" href="/logs">
+        <span class="sidebar-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M6 5h12"></path><path d="M6 10h12"></path><path d="M6 15h8"></path><path d="M4 3h16v18H4z"></path></svg></span>
+        <span class="sidebar-entry-copy">
+          <strong class="truncate">Logs</strong>
+        </span>
+      </a>
+    </div>
+  </div>
+  {{end}}
+  <div class="logged-as">
+    <h2>Logged as</h2>
+    <div class="identity">
+      <strong class="truncate">{{.User.Email}}</strong>
+      <small class="truncate">{{.User.Name}}</small>
+    </div>
+    {{if not .AdminMode}}
+    <div class="sidebar-nav logged-as-actions">
+      <a class="workspace-link {{if eq .ActiveSection "settings"}}active{{end}}" href="/settings">
+        <span class="sidebar-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.76l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.6 1.6 0 0 0-1.76-.32 1.6 1.6 0 0 0-1 1.45V21a2 2 0 0 1-4 0v-.09a1.6 1.6 0 0 0-1-1.45 1.6 1.6 0 0 0-1.76.32l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.76 1.6 1.6 0 0 0-1.45-1H3a2 2 0 0 1 0-4h.09a1.6 1.6 0 0 0 1.45-1 1.6 1.6 0 0 0-.32-1.76l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.6 1.6 0 0 0 1.76.32h.01a1.6 1.6 0 0 0 .99-1.45V3a2 2 0 0 1 4 0v.09a1.6 1.6 0 0 0 1 1.45 1.6 1.6 0 0 0 1.76-.32l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.76v.01a1.6 1.6 0 0 0 1.45.99H21a2 2 0 0 1 0 4h-.09a1.6 1.6 0 0 0-1.45 1z"></path></svg></span>
+        <span class="sidebar-entry-copy">
+          <strong class="truncate">Settings</strong>
+        </span>
+      </a>
+    </div>
+    {{end}}
+  </div>
+</aside>
+<template data-aiwp-fragment="sidebar:end"></template>
+{{end}}

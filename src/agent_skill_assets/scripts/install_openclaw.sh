@@ -1,4 +1,9 @@
 #!/bin/sh
+# Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+# Proprietary software. No use, copy, modification, distribution, disclosure,
+# or reverse engineering is permitted without prior written authorization
+# from Opensense Ltd.
+
 set -eu
 
 skill_name="ai-workspace-proxy"

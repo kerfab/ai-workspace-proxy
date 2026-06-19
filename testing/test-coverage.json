@@ -49,14 +49,36 @@
       "kind": "feature",
       "name": "Proxy Google login",
       "summary": "Allow users to sign in to the proxy with verified Google accounts under allowed email domains.",
-      "tests": []
+      "tests": [
+        {
+          "test_name": "TestGoogleLoginUsesStoredUserSessionTimeout",
+          "test_summary": "Verifies successful Google login creates a browser session using the authenticated user's configured session duration.",
+          "test_script": "src/app_session_timeout_test.go"
+        },
+        {
+          "test_name": "TestGoogleLoginRequiresTwoFactorWhenEnabled",
+          "test_summary": "Verifies proxy login pauses at a second-factor challenge when the user has enrolled 2FA.",
+          "test_script": "src/app_two_factor_test.go"
+        }
+      ]
     },
     {
       "id": "feature.session_and_csrf",
       "kind": "feature",
       "name": "Session and CSRF protection",
       "summary": "Maintain browser sessions and require CSRF tokens for state-changing dashboard actions.",
-      "tests": []
+      "tests": [
+        {
+          "test_name": "TestHandleSessionTimeoutUpdateAdjustsCurrentSessionAndReturnsJSON",
+          "test_summary": "Verifies a state-changing settings form uses the current session, refreshes its expiry, and returns the updated browser-session metadata.",
+          "test_script": "src/app_session_timeout_test.go"
+        },
+        {
+          "test_name": "TestTwoFactorEnrollmentFlow",
+          "test_summary": "Verifies the logged-in browser flow can start, confirm, and reset a CSRF-protected 2FA enrollment sequence.",
+          "test_script": "src/app_two_factor_test.go"
+        }
+      ]
     },
     {
       "id": "feature.logout",
@@ -70,14 +92,31 @@
       "kind": "feature",
       "name": "User timezone settings",
       "summary": "Allow each user to select a local timezone and render timestamps according to that preference.",
-      "tests": []
+      "tests": [
+        {
+          "test_name": "TestRequestLogColumnsExposeSingleUserTimezoneTimestamp",
+          "test_summary": "Verifies the activity-log column catalog exposes one user-timezone timestamp column instead of separate local and UTC timestamp defaults.",
+          "test_script": "src/app_logging_test.go"
+        },
+        {
+          "test_name": "TestRequestLogsAPIDateFiltersUseUserTimezone",
+          "test_summary": "Verifies activity-log date filtering is evaluated in the user's configured timezone.",
+          "test_script": "src/app_logging_test.go"
+        }
+      ]
     },
     {
       "id": "feature.workspace_oauth_connection",
       "kind": "feature",
       "name": "Workspace OAuth connection",
       "summary": "Allow a proxy user to connect Google Workspace accounts and store encrypted OAuth tokens for each account.",
-      "tests": []
+      "tests": [
+        {
+          "test_name": "TestWorkspaceCallbackRejectsWrongGoogleAccountWithoutOverwritingTokens",
+          "test_summary": "Verifies the Workspace OAuth callback rejects a mismatched Google account and preserves the previously stored Workspace tokens.",
+          "test_script": "src/app_workspace_auth_test.go"
+        }
+      ]
     },
     {
       "id": "feature.workspace_token_refresh",
@@ -91,7 +130,13 @@
       "kind": "feature",
       "name": "Multiple Workspace accounts",
       "summary": "Allow one proxy user to manage multiple connected Workspace accounts selected by friendly name or email.",
-      "tests": []
+      "tests": [
+        {
+          "test_name": "TestUserWorkspacesAPIRequiresBackendKeyAndReturnsWorkspace",
+          "test_summary": "Verifies the privileged Workspace API lists multiple connected Workspace accounts and resolves one Workspace by friendly name or email.",
+          "test_script": "src/app_workspace_api_handlers_test.go"
+        }
+      ]
     },
     {
       "id": "feature.workspace_friendly_name",
@@ -112,14 +157,36 @@
       "kind": "feature",
       "name": "Workspace disconnect",
       "summary": "Allow users to disconnect a Workspace account and synchronize related stored preferences.",
-      "tests": []
+      "tests": [
+        {
+          "test_name": "TestWorkspaceDisconnectClearsOAuthButKeepsSettings",
+          "test_summary": "Verifies disconnecting a Workspace clears stored OAuth tokens while preserving local Workspace settings.",
+          "test_script": "src/app_workspace_auth_test.go"
+        },
+        {
+          "test_name": "TestWorkspaceDeleteRemovesWorkspaceSettings",
+          "test_summary": "Verifies deleting Workspace settings removes the local proxy-side Workspace configuration.",
+          "test_script": "src/app_workspace_auth_test.go"
+        }
+      ]
     },
     {
       "id": "feature.agent_workspace_api_key_management",
       "kind": "feature",
-      "name": "Agent Workspace API key management",
-      "summary": "Create, download, and rotate the per-user standard API key used by AI agents for policy-enforced Google Workspace operations.",
-      "tests": []
+      "name": "Agent API key management",
+      "summary": "Create, download, and rotate per-agent API keys used by AI agents for grant- and policy-enforced Google Workspace operations.",
+      "tests": [
+        {
+          "test_name": "TestAgentWorkspaceAPIConfigUsesRenamedFileAndSortedWorkspaces",
+          "test_summary": "Verifies the downloaded agent config uses the current filename, the decrypted agent API key, and the granted Workspace list.",
+          "test_script": "src/app_token_handlers_test.go"
+        },
+        {
+          "test_name": "TestTokenHintCanLimitVisibleSuffix",
+          "test_summary": "Verifies agent API keys are shown through shortened hints rather than full raw secrets in the UI.",
+          "test_script": "src/app_token_handlers_test.go"
+        }
+      ]
     },
     {
       "id": "feature.user_backend_api_key_management",
@@ -132,11 +199,11 @@
       "id": "feature.privileged_user_configuration_api",
       "kind": "feature",
       "name": "Privileged user configuration API",
-      "summary": "Allow user-owned privileged API clients to manage user-level proxy settings, policies, Workspace policy assignment, and test setup without bypassing policy enforcement for Google Workspace operations.",
+      "summary": "Allow user-owned privileged API clients to manage user-level proxy settings, policies, agent Workspace grants, and test setup without bypassing policy enforcement for Google Workspace operations.",
       "tests": [
         {
           "test_name": "TestUserPolicyAPIRejectsStandardAgentKey",
-          "test_summary": "Verifies standard agent Workspace API keys cannot access privileged user configuration APIs.",
+          "test_summary": "Verifies agent API keys cannot access privileged user configuration APIs.",
           "test_script": "src/app_policy_api_handlers_test.go"
         },
         {
@@ -150,8 +217,13 @@
           "test_script": "src/app_policy_api_handlers_test.go"
         },
         {
-          "test_name": "TestUserWorkspacesAPIRequiresBackendKeyAndReturnsPolicy",
-          "test_summary": "Verifies the privileged Workspace API rejects standard agent keys and returns current Workspace policy assignment.",
+          "test_name": "TestUserWorkspacesAPIRequiresBackendKeyAndReturnsWorkspace",
+          "test_summary": "Verifies the privileged Workspace API rejects agent API keys and returns Workspace identity without policy assignment fields.",
+          "test_script": "src/app_workspace_api_handlers_test.go"
+        },
+        {
+          "test_name": "TestUserAgentDriveFolderGrantsAPIRequiresBackendKeyAndUpdatesFolders",
+          "test_summary": "Verifies privileged clients can read and update per-agent Drive folder grants while agent API keys are rejected.",
           "test_script": "src/app_workspace_api_handlers_test.go"
         }
       ]
@@ -164,7 +236,7 @@
       "tests": [
         {
           "test_name": "TestAgentWorkspaceAPIConfigUsesRenamedFileAndSortedWorkspaces",
-          "test_summary": "Verifies the agent config filename, config metadata, token field, skill platform, and Workspace email sorting.",
+          "test_summary": "Verifies the agent config filename, decrypted agent token field, granted Workspace sorting, and Drive folder grant output.",
           "test_script": "src/app_token_handlers_test.go"
         }
       ]
@@ -172,8 +244,8 @@
     {
       "id": "feature.policy_editor",
       "kind": "feature",
-      "name": "Policy editor",
-      "summary": "Allow users to create, edit, delete, and choose default custom policies from friendly capabilities.",
+      "name": "Permissions editor",
+      "summary": "Allow users to create, edit, delete, and choose default custom policies from friendly capability cards.",
       "tests": [
         {
           "test_name": "TestPolicyCapabilityGroupsCalendarSubgroupsAndSorting",
@@ -198,25 +270,108 @@
       ]
     },
     {
-      "id": "feature.workspace_policy_assignment",
+      "id": "feature.agent_workspace_grants",
       "kind": "feature",
-      "name": "Workspace policy assignment",
-      "summary": "Allow users to select which policy applies to each connected Workspace account.",
-      "tests": []
+      "name": "Agent Workspace grants",
+      "summary": "Allow users to create agent identities, attach one or more Workspace accounts, select which policy applies to each agent/Workspace grant, and scope Drive folder access per Workspace grant.",
+      "tests": [
+        {
+          "test_name": "TestAgentGrantsUpdateKeepsSelectedAgentOnRedirect",
+          "test_summary": "Verifies agent Workspace grants persist selected Workspace, policy, and accountability settings without losing the selected agent context.",
+          "test_script": "src/app_agents_test.go"
+        },
+        {
+          "test_name": "TestAgentDriveFolderGrantsUpdateAndFolderDeleteCleanup",
+          "test_summary": "Verifies per-agent Drive folder grants can be updated, survive folder Reference Name changes, are removed when a folder is deleted, and produce user audit logs.",
+          "test_script": "src/app_agents_test.go"
+        },
+        {
+          "test_name": "TestUserAgentDriveFolderGrantsAPIRequiresBackendKeyAndUpdatesFolders",
+          "test_summary": "Verifies the privileged user API supports per-agent Drive folder grant setup for automation and live tests.",
+          "test_script": "src/app_workspace_api_handlers_test.go"
+        }
+      ]
     },
     {
       "id": "feature.proxy_relay",
       "kind": "feature",
       "name": "Google API proxy relay",
       "summary": "Authenticate proxy API calls, resolve Workspace identity, enforce policy, and forward allowed requests to Google.",
-      "tests": []
+      "tests": [
+        {
+          "test_name": "TestNormalizeProxyTargetStructuredMethodSeparators",
+          "test_summary": "Verifies the relay normalizes structured Google method separators such as `:batchUpdate` before policy matching and forwarding.",
+          "test_script": "src/app_proxy_relay_test.go"
+        },
+        {
+          "test_name": "TestNormalizeProxyTargetPeopleOnlyAllowsContactSearch",
+          "test_summary": "Verifies the relay only accepts the supported People API contact-search routes.",
+          "test_script": "src/app_proxy_relay_test.go"
+        },
+        {
+          "test_name": "TestProxyRequiresMotiveWhenAgentGrantEnforcesAccountability",
+          "test_summary": "Verifies the relay rejects agent requests missing a required motive on grants that enforce accountability.",
+          "test_script": "src/app_agents_test.go"
+        }
+      ]
     },
     {
       "id": "feature.denied_request_logging",
       "kind": "feature",
-      "name": "Denied request logging",
-      "summary": "Log denied proxy requests while redacting authorization, cookies, and Gmail raw MIME bodies.",
-      "tests": []
+      "name": "Per-user request logging",
+      "summary": "Log per-user proxy request outcomes, provide an advanced consolidated activity-log console with filtering/export, enforce per-grant agent accountability and human approval logging, and clean up retained logs automatically.",
+      "tests": [
+        {
+          "test_name": "TestRequestLogStoreSettingsAndStandardRetention",
+          "test_summary": "Verifies request logging remains enabled, standard retention stays fixed at 7 days, request logs persist correctly, and expired entries are cleaned up.",
+          "test_script": "src/app_logging_test.go"
+        },
+        {
+          "test_name": "TestAgentContextValidation",
+          "test_summary": "Verifies logged agent identity and motive metadata are rejected when missing or oversized.",
+          "test_script": "src/app_logging_test.go"
+        },
+        {
+          "test_name": "TestAgentSkillDownloadRequestLogging",
+          "test_summary": "Verifies agent skill self-update downloads are logged as agent activity and include the expected context fields.",
+          "test_script": "src/app_logging_test.go"
+        },
+        {
+          "test_name": "TestRequestAndAuditLogsCannotBeDisabledByUserSettings",
+          "test_summary": "Verifies request and audit logging remain enabled for standard users.",
+          "test_script": "src/app_logging_test.go"
+        },
+        {
+          "test_name": "TestUserAuditLogsCaptureAccountAndSettingsActions",
+          "test_summary": "Verifies user-facing account, settings, and configuration actions are captured in audit logs with meaningful targets and details.",
+          "test_script": "src/app_logging_test.go"
+        },
+        {
+          "test_name": "TestParseRetentionDaysUsesWholeNumbersAndMax",
+          "test_summary": "Verifies retention-day parsing still clamps to the standard-user limit used by the cleanup layer.",
+          "test_script": "src/app_logging_test.go"
+        },
+        {
+          "test_name": "TestRequestLogViewSettingsAPIAuditsChanges",
+          "test_summary": "Verifies request-log view settings changes are audited without mutating unrelated user settings.",
+          "test_script": "src/app_logging_test.go"
+        },
+        {
+          "test_name": "TestRequestLogViewSettingsPersist",
+          "test_summary": "Verifies request-log column view settings and page size persist per user.",
+          "test_script": "src/app_logging_test.go"
+        },
+        {
+          "test_name": "TestRequestLogFilteringPaginationAndProjection",
+          "test_summary": "Verifies request-log regex filtering, pagination, and export projection helpers.",
+          "test_script": "src/app_logging_test.go"
+        },
+        {
+          "test_name": "TestCSVSafePrefixesFormulaValues",
+          "test_summary": "Verifies CSV exports prefix formula-like values to reduce spreadsheet injection risk.",
+          "test_script": "src/app_logging_test.go"
+        }
+      ]
     },
     {
       "id": "feature.drive_folder_management",
@@ -226,7 +381,7 @@
       "tests": [
         {
           "test_name": "TestUserDriveFoldersAPIRequiresBackendKeyAndListsRefs",
-          "test_summary": "Verifies privileged clients can list allowed Drive folder references for a Workspace while standard agent keys are rejected.",
+          "test_summary": "Verifies privileged clients can list allowed Drive folder references for a Workspace while agent API keys are rejected.",
           "test_script": "src/app_workspace_api_handlers_test.go"
         }
       ]
@@ -236,35 +391,70 @@
       "kind": "feature",
       "name": "Drive subfolder tree cache",
       "summary": "Recursively discover Drive subfolders, cache them in SQLite, and use the cache for subfolder operations.",
-      "tests": []
+      "tests": [
+        {
+          "test_name": "TestAgentDriveFolderGrantsUpdateAndFolderDeleteCleanup",
+          "test_summary": "Verifies cached Drive folder grants stay aligned when registered folders are renamed or deleted, which depends on the stored folder-reference state.",
+          "test_script": "src/app_agents_test.go"
+        }
+      ]
     },
     {
       "id": "feature.drive_folder_tree_api",
       "kind": "feature",
       "name": "Drive folder tree API",
       "summary": "Expose proxy APIs for agents to list and refresh cached Drive folder trees.",
-      "tests": []
+      "tests": [
+        {
+          "test_name": "TestProxyDeniesDriveWhenAgentHasNoAllowedDriveFolders",
+          "test_summary": "Verifies Drive-facing agent requests are blocked until the Workspace grant has allowed Drive folder references available to the tree API and request rewriter.",
+          "test_script": "src/app_agents_test.go"
+        }
+      ]
     },
     {
       "id": "feature.drive_request_rewriting",
       "kind": "feature",
       "name": "Drive and structured file request rewriting",
       "summary": "Rewrite Drive, Docs, Sheets, and Slides requests so creates/searches stay inside allowed folder trees.",
-      "tests": []
+      "tests": [
+        {
+          "test_name": "TestProxyDeniesDriveWhenAgentHasNoAllowedDriveFolders",
+          "test_summary": "Verifies Drive requests are denied before policy evaluation when the agent has Workspace access but no allowed Drive folder grants.",
+          "test_script": "src/app_agents_test.go"
+        }
+      ]
     },
     {
       "id": "feature.agent_skill_generation",
       "kind": "feature",
       "name": "Agent skill generation",
       "summary": "Build policy-filtered agent skill zip packages containing config, scripts, and Workspace-specific Markdown files.",
-      "tests": []
+      "tests": [
+        {
+          "test_name": "TestAgentSkillMarkdownAddsHumanApprovalNoticeForReviewRequiredCapabilities",
+          "test_summary": "Verifies generated skill Markdown adds the required human-review notice to operations whose permissions require approval.",
+          "test_script": "src/agent_skill_generation_test.go"
+        },
+        {
+          "test_name": "TestAgentWorkspaceAPIConfigUsesRenamedFileAndSortedWorkspaces",
+          "test_summary": "Verifies generated agent config output is scoped to the selected agent and Workspace list.",
+          "test_script": "src/app_token_handlers_test.go"
+        }
+      ]
     },
     {
       "id": "feature.agent_skill_install_tokens",
       "kind": "feature",
       "name": "Agent skill install tokens",
       "summary": "Create single-use 10-minute download tokens for local agent skill installation.",
-      "tests": []
+      "tests": [
+        {
+          "test_name": "TestAgentSkillInstallTokenDownloadIsUserAuditNotAgentRequest",
+          "test_summary": "Verifies token-based dashboard downloads are treated as user-driven install activity rather than agent request traffic.",
+          "test_script": "src/app_logging_test.go"
+        }
+      ]
     },
     {
       "id": "feature.agent_skill_install_scripts",
@@ -281,6 +471,11 @@
           "test_name": "Python syntax check for workspace proxy tool",
           "test_summary": "Verifies the generated Python proxy helper compiles with `python3 -m py_compile`.",
           "test_script": "src/agent_skill_assets/scripts/workspace_proxy_tool.py"
+        },
+        {
+          "test_name": "Update skill forwards agent logging context",
+          "test_summary": "Verifies update_skill.sh accepts agent identity options and forwards them to the proxy helper for logging enforcement.",
+          "test_script": "testing/scripts/update_skill_agent_context_test.py"
         }
       ]
     },
@@ -303,7 +498,33 @@
       "kind": "feature",
       "name": "Dashboard user interface",
       "summary": "Render dashboard, left navigation, settings, policy editor, Workspace management, Drive folder management, and install overlays.",
-      "tests": []
+      "tests": [
+        {
+          "test_name": "TestActiveSectionAndPageTitles",
+          "test_summary": "Verifies section activation and breadcrumb/page-title rendering stay consistent across the main dashboard surfaces.",
+          "test_script": "src/app_ui_test.go"
+        },
+        {
+          "test_name": "TestDashboardShowsKPIIndicators",
+          "test_summary": "Verifies the dashboard renders the KPI cards and onboarding content.",
+          "test_script": "src/app_ui_test.go"
+        },
+        {
+          "test_name": "TestWorkspaceFormsUseCompactSizingClasses",
+          "test_summary": "Verifies key Workspace-management controls keep the intended compact sizing classes.",
+          "test_script": "src/app_ui_test.go"
+        },
+        {
+          "test_name": "TestRequestLogTableStaysConstrainedInsideBrowser",
+          "test_summary": "Verifies the activity-log browser stays constrained within its section and supports internal scrolling.",
+          "test_script": "src/app_ui_test.go"
+        },
+        {
+          "test_name": "TestAgentsAccessTemplateShowsAgentGrantsAndScopedSkillDownload",
+          "test_summary": "Verifies the agents page renders Workspace grants, accountability controls, and scoped skill-download UI.",
+          "test_script": "src/app_ui_test.go"
+        }
+      ]
     },
     {
       "id": "policy.gmail_profile_read",
@@ -889,17 +1110,17 @@
       "id": "policy.drive_files_read",
       "kind": "policy_permission",
       "group": "Files",
-      "name": "Read non-Google-native files",
-      "summary": "Allow agents to read metadata and download non-Google-native files inside allowed folders.",
+      "name": "Read other file types",
+      "summary": "Allow agents to read metadata and download other file types inside allowed folders.",
       "tests": [
         {
           "test_name": "TestPolicyEngineDriveFilesRead",
-          "test_summary": "Verifies non-Google-native file read routes are allowed while search, export, Google-native files, create, copy, edit, upload, delete, and empty-trash routes are denied.",
+          "test_summary": "Verifies Other file types read routes are allowed while search, export, Google-native files, create, copy, edit, upload, delete, and empty-trash routes are denied.",
           "test_script": "src/policy_test.go"
         },
         {
-          "test_name": "Live read non-Google-native files",
-          "test_summary": "Reads metadata and downloads a non-Google-native file through the proxy, then verifies search, about, create, update, and delete are denied.",
+          "test_name": "Live read other file types",
+          "test_summary": "Reads metadata and downloads a file covered by Other file types through the proxy, then verifies search, about, create, update, and delete are denied.",
           "test_script": "testing/scripts/drive_files_read.py",
           "live": true
         }
@@ -909,17 +1130,17 @@
       "id": "policy.drive_files_create",
       "kind": "policy_permission",
       "group": "Files",
-      "name": "Create non-Google-native files",
-      "summary": "Allow agents to create or copy non-Google-native files inside allowed folders.",
+      "name": "Create other file types",
+      "summary": "Allow agents to create or copy other file types inside allowed folders.",
       "tests": [
         {
           "test_name": "TestPolicyEngineDriveFilesWriteUsesNonGoogleNativeFiles",
-          "test_summary": "Verifies file create/copy allows non-Google-native files and rejects Google-native Docs.",
+          "test_summary": "Verifies file create/copy allows Other file types and rejects Google-native Docs.",
           "test_script": "src/policy_test.go"
         },
         {
-          "test_name": "Live Create non-Google-native files",
-          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Create non-Google-native files.",
+          "test_name": "Live Create other file types",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Create other file types.",
           "test_script": "testing/scripts/policy_permission_live.py",
           "live": true
         }
@@ -929,17 +1150,17 @@
       "id": "policy.drive_files_update",
       "kind": "policy_permission",
       "group": "Files",
-      "name": "Edit non-Google-native files",
-      "summary": "Allow agents to rename, update metadata, or upload new content for non-Google-native files in allowed folders.",
+      "name": "Edit other file types",
+      "summary": "Allow agents to rename, update metadata, or upload new content for other file types in allowed folders.",
       "tests": [
         {
           "test_name": "TestPolicyEngineDriveFilesWriteUsesNonGoogleNativeFiles",
-          "test_summary": "Verifies file update/upload allows non-Google-native files and rejects Google-native Docs.",
+          "test_summary": "Verifies file update/upload allows Other file types and rejects Google-native Docs.",
           "test_script": "src/policy_test.go"
         },
         {
-          "test_name": "Live Edit non-Google-native files",
-          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Edit non-Google-native files.",
+          "test_name": "Live Edit other file types",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Edit other file types.",
           "test_script": "testing/scripts/policy_permission_live.py",
           "live": true
         }
@@ -949,17 +1170,17 @@
       "id": "policy.drive_files_delete",
       "kind": "policy_permission",
       "group": "Files",
-      "name": "Delete non-Google-native files",
-      "summary": "Allow agents to permanently delete non-Google-native files in allowed folders.",
+      "name": "Delete other file types",
+      "summary": "Allow agents to permanently delete other file types in allowed folders.",
       "tests": [
         {
           "test_name": "TestPolicyEngineDriveFilesWriteUsesNonGoogleNativeFiles",
-          "test_summary": "Verifies file delete allows non-Google-native files and rejects Google-native Docs and empty-trash.",
+          "test_summary": "Verifies file delete allows Other file types and rejects Google-native Docs and empty-trash.",
           "test_script": "src/policy_test.go"
         },
         {
-          "test_name": "Live Delete non-Google-native files",
-          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Delete non-Google-native files.",
+          "test_name": "Live Delete other file types",
+          "test_summary": "Runs positive allowed and negative denied live proxy enforcement cases for Delete other file types.",
           "test_script": "testing/scripts/policy_permission_live.py",
           "live": true
         }
@@ -1414,7 +1635,7 @@
       "tests": [
         {
           "test_name": "TestPolicyEngineStructuredFileNativeDriveRoutes",
-          "test_summary": "Verifies Google Slides delete allows deleting Slides through the file endpoint while rejecting non-Google-native files.",
+          "test_summary": "Verifies Google Slides delete allows deleting Slides through the file endpoint while rejecting Other file types.",
           "test_script": "src/policy_test.go"
         },
         {

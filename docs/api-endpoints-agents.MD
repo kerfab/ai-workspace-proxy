@@ -2,39 +2,63 @@
 
 This file documents endpoints intended for AI agents and generated skill packages.
 
-Agents must use the standard agent Workspace API key from `agents-workspace-api-access.config.json`:
+Agents must use the agent API key from `agents-workspace-api-access.config.json`:
 
 ```http
-Authorization: Bearer <proxy_token>
+Authorization: Bearer <agent_api_token>
 ```
 
 Do not use the end-user backend API key from `user-backend-api-access.config.json` for agent operations.
 
 ## Workspace Selection
 
-Most agent endpoints require a connected Workspace selector:
+Most agent endpoints require:
 
 ```text
 workspace=<Workspace friendly name or Workspace email>
 ```
 
-The selector is checked against Workspaces connected by the same proxy user. Supplying another user's Workspace email cannot grant access.
+The selector is resolved only against Workspace accounts connected by the same proxy user.
 
 ## Google API Proxy Relay
 
-These endpoints forward requests to Google only after the proxy authenticates the agent, resolves the Workspace, rewrites Drive-related requests when needed, and enforces the Workspace policy.
+These endpoints forward requests to Google only after the proxy:
+
+1. authenticates the agent key
+2. resolves the selected Workspace
+3. confirms that the agent has a grant for that Workspace
+4. checks the agent firewall when enabled
+5. applies Drive/Docs/Sheets/Slides request rewriting when needed
+6. enforces the policy attached to that agent Workspace grant
+7. enforces Drive folder grants before Drive-family requests
 
 All relay requests require:
 
-- `Authorization: Bearer <proxy_token>`
+- `Authorization: Bearer <agent_api_token>`
 - `workspace=<Workspace friendly name or email>`
 - the original Google API method, path, query, and JSON/body payload expected by Google
 
 The proxy removes `workspace` before forwarding the request to Google.
 
-### Gmail
+Agent name and location come from the configured agent identity and are logged with each request. Some Workspace grants also require a motive:
 
-Gmail API paths call email resources `messages`; this is the Google API term for Gmail emails.
+```http
+X-AIWP-Agent-Motive: <one or two sentence motive, max 4096 chars>
+```
+
+When the selected agent Workspace grant has accountability enabled, the proxy rejects missing, blank, or oversized motive headers before the Google request is forwarded.
+
+Some policy permissions can also require human review and approval. When the matched permission has that flag, the relay request must include:
+
+```http
+X-AIWP-Human-Approval: <short explanation of how approval was obtained, max 4096 chars>
+```
+
+Generated skills expose this as `--human-approval "<how approval was obtained>"` and add an IMPORTANT notice to affected operation sections.
+
+## Service Base Paths
+
+### Gmail
 
 ```http
 <METHOD> /gmail.googleapis.com/<gmail-api-path>?workspace=<Workspace>
@@ -66,22 +90,10 @@ GET /people.googleapis.com/v1/people:searchContacts?workspace=work&query=Frederi
 <METHOD> /calendar.googleapis.com/<calendar-api-path>?workspace=<Workspace>
 ```
 
-Example:
-
-```http
-GET /calendar.googleapis.com/calendar/v3/users/me/calendarList?workspace=work
-```
-
 ### Drive
 
 ```http
 <METHOD> /drive.googleapis.com/<drive-api-path>?workspace=<Workspace>
-```
-
-Example:
-
-```http
-GET /drive.googleapis.com/drive/v3/files?workspace=work&q=name%20contains%20%27Report%27
 ```
 
 ### Docs
@@ -90,22 +102,10 @@ GET /drive.googleapis.com/drive/v3/files?workspace=work&q=name%20contains%20%27R
 <METHOD> /docs.googleapis.com/<docs-api-path>?workspace=<Workspace>
 ```
 
-Example:
-
-```http
-GET /docs.googleapis.com/v1/documents/<documentId>?workspace=work
-```
-
 ### Sheets
 
 ```http
 <METHOD> /sheets.googleapis.com/<sheets-api-path>?workspace=<Workspace>
-```
-
-Example:
-
-```http
-GET /sheets.googleapis.com/v4/spreadsheets/<spreadsheetId>?workspace=work
 ```
 
 ### Slides
@@ -114,15 +114,9 @@ GET /sheets.googleapis.com/v4/spreadsheets/<spreadsheetId>?workspace=work
 <METHOD> /slides.googleapis.com/<slides-api-path>?workspace=<Workspace>
 ```
 
-Example:
-
-```http
-GET /slides.googleapis.com/v1/presentations/<presentationId>?workspace=work
-```
-
 ## Drive Folder Tree API
 
-These endpoints expose the proxy's cached Drive folder tree for registered Drive folder references. They are used by agents to discover allowed subfolders and refresh the cache when needed.
+These endpoints expose the proxy's cached Drive folder tree for Drive folder references granted to the agent.
 
 ### List Cached Drive Folder Trees
 
@@ -131,39 +125,7 @@ GET /api/drive-folders/tree?workspace=<Workspace>
 GET /api/drive-folders/tree?workspace=<Workspace>&driveRef=<Reference Name>
 ```
 
-Authentication:
-
-```http
-Authorization: Bearer <proxy_token>
-```
-
-Response:
-
-```json
-{
-  "driveFolders": [
-    {
-      "referenceName": "Accounting",
-      "referenceKey": "accounting",
-      "rootFolderId": "folder-id",
-      "rootName": "Accounting",
-      "refreshedAt": "2026-06-13T10:00:00Z",
-      "folders": [
-        {
-          "folderId": "folder-id",
-          "parentFolderId": "",
-          "name": "Accounting",
-          "path": "",
-          "depth": 0,
-          "resourceKey": ""
-        }
-      ]
-    }
-  ]
-}
-```
-
-If `driveRef` is omitted, the endpoint returns all registered Drive folder references for the Workspace.
+If `driveRef` is omitted, the endpoint returns every Drive folder reference granted to the agent for that Workspace.
 
 ### Refresh Drive Folder Trees
 
@@ -172,29 +134,7 @@ POST /api/drive-folders/tree/refresh?workspace=<Workspace>
 POST /api/drive-folders/tree/refresh?workspace=<Workspace>&driveRef=<Reference Name>
 ```
 
-Authentication:
-
-```http
-Authorization: Bearer <proxy_token>
-```
-
-Response:
-
-```json
-{
-  "status": "ok",
-  "driveFolders": [
-    {
-      "referenceName": "Accounting",
-      "referenceKey": "accounting",
-      "rootFolderId": "folder-id",
-      "rootName": "Accounting",
-      "folderCount": 12,
-      "refreshedAt": "2026-06-13T10:00:00Z"
-    }
-  ]
-}
-```
+This refreshes the cached folder tree for the granted reference set. Agents should use it only when needed because it consumes Google API quota.
 
 ## Agent Skill Package Download
 
@@ -207,7 +147,7 @@ GET /api/agent-skill/download?platform=<generic|openclaw>
 Authentication:
 
 ```http
-Authorization: Bearer <proxy_token>
+Authorization: Bearer <agent_api_token>
 ```
 
 Response:
@@ -215,7 +155,7 @@ Response:
 - `Content-Type: application/zip`
 - `Content-Disposition: attachment; filename="ai-workspace-proxy-<platform>-skill.zip"`
 
-The dashboard install overlay also creates single-use download URLs in this form:
+The dashboard install overlay also creates single-use download URLs:
 
 ```http
 GET /api/agent-skill/download?token=<single-use-install-token>
@@ -237,6 +177,6 @@ Error responses are JSON:
 Common statuses:
 
 - `401`: missing, invalid, or suspended agent key
-- `403`: Workspace not found, Drive folder denied, or policy denied
+- `403`: Workspace not found, Workspace grant missing, firewall denied, Drive folder denied, or policy denied
 - `413`: request body exceeds `MAX_REQUEST_BODY_BYTES`
 - `502`: Google token refresh, upstream Google, or Drive tree discovery error

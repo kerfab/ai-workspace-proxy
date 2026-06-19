@@ -1,3 +1,8 @@
+// Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+// Proprietary software. No use, copy, modification, distribution, disclosure,
+// or reverse engineering is permitted without prior written authorization
+// from Opensense Ltd.
+
 package main
 
 import (
@@ -31,7 +36,7 @@ func mustJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
 }
-func (a *App) rewriteWorkspaceRequest(userID, mailboxEmail, accessToken, method string, target relayTarget, body []byte, query url.Values) ([]byte, string, string, error) {
+func (a *App) rewriteWorkspaceRequest(userID, agentID, mailboxEmail, accessToken, method string, target relayTarget, body []byte, query url.Values) ([]byte, string, string, error) {
 	refName := query.Get("driveRef")
 	drivePath := query.Get("drivePath")
 	driveFolderID := query.Get("driveFolderId")
@@ -41,9 +46,14 @@ func (a *App) rewriteWorkspaceRequest(userID, mailboxEmail, accessToken, method 
 	if target.serviceLabel == "people" {
 		return rewritePeopleRequest(method, target.normalizedPath, body, query)
 	}
-	selectedFolders, selectedRef, err := a.resolveReferenceFolders(userID, mailboxEmail, refName)
-	if err != nil && target.serviceLabel != "gmail" && target.serviceLabel != "calendar" {
-		return body, "", "", err
+	selectedFolders := []AllowedDriveFolder{}
+	var selectedRef *AllowedDriveFolder
+	if target.serviceLabel == "drive" || target.serviceLabel == "docs" || target.serviceLabel == "sheets" || target.serviceLabel == "slides" {
+		var err error
+		selectedFolders, selectedRef, err = a.resolveAgentReferenceFolders(userID, agentID, mailboxEmail, refName)
+		if err != nil {
+			return body, "", "", err
+		}
 	}
 	switch target.serviceLabel {
 	case "drive":
@@ -90,28 +100,21 @@ func (a *App) rewriteDriveRequest(userID, accessToken, method, path string, body
 		if err != nil {
 			return body, "", "", err
 		}
-		kind := detectFileKindFromMime(fmt.Sprintf("%v", m["mimeType"]))
-		if !kindAllowedInFolder(selectedRef, kind) {
-			return body, "", "", fmt.Errorf("selected folder does not allow %s files", kind)
-		}
 		m["parents"] = []string{targetFolderID}
 		delete(m, "trashed")
 		return mustJSON(m), query.Encode(), "", nil
 	}
 	if strings.HasPrefix(path, "/upload/drive/v3/files/") {
 		fileID := extractPrimaryIDFromPath(path, "/upload/drive/v3/files/")
-		meta, folder, err := a.ensureFileInAllowedFolders(userID, accessToken, fileID, folders)
+		_, _, err := a.ensureFileInAllowedFolders(userID, accessToken, fileID, folders)
 		if err != nil {
 			return body, "", "", err
-		}
-		if !kindAllowedInFolder(folder, detectFileKindFromMime(meta.MimeType)) {
-			return body, "", "", fmt.Errorf("selected file type is not allowed in its configured folder")
 		}
 		return body, query.Encode(), "", nil
 	}
 	if strings.HasPrefix(path, "/drive/v3/files/") {
 		fileID := extractPrimaryIDFromPath(path, "/drive/v3/files/")
-		meta, folder, err := a.ensureFileInAllowedFolders(userID, accessToken, fileID, folders)
+		_, _, err := a.ensureFileInAllowedFolders(userID, accessToken, fileID, folders)
 		if err != nil {
 			return body, "", "", err
 		}
@@ -127,9 +130,6 @@ func (a *App) rewriteDriveRequest(userID, accessToken, method, path string, body
 				return mustJSON(m), query.Encode(), "", nil
 			}
 		}
-		if !kindAllowedInFolder(folder, detectFileKindFromMime(meta.MimeType)) {
-			return body, "", "", fmt.Errorf("selected file type is not allowed in its configured folder")
-		}
 		return body, query.Encode(), "", nil
 	}
 	return body, query.Encode(), "", nil
@@ -141,9 +141,6 @@ func (a *App) rewriteStructuredFileRequest(userID, accessToken, service, method,
 		if selectedRef == nil {
 			return body, "", "", fmt.Errorf("%s create requires driveRef with an allowed Reference Name", strings.Title(service))
 		}
-		if !kindAllowedInFolder(selectedRef, kind) {
-			return body, "", "", fmt.Errorf("selected folder does not allow %s files", kind)
-		}
 		targetFolderID, err := a.resolveDriveTargetFolderID(userID, accessToken, selectedRef, drivePath, driveFolderID)
 		if err != nil {
 			return body, "", "", err
@@ -154,15 +151,12 @@ func (a *App) rewriteStructuredFileRequest(userID, accessToken, service, method,
 	if fileID == "" {
 		return body, query.Encode(), "", nil
 	}
-	meta, folder, err := a.ensureFileInAllowedFolders(userID, accessToken, fileID, folders)
+	meta, _, err := a.ensureFileInAllowedFolders(userID, accessToken, fileID, folders)
 	if err != nil {
 		return body, "", "", err
 	}
 	if detectFileKindFromMime(meta.MimeType) != kind {
 		return body, "", "", fmt.Errorf("target file is not a %s file", kind)
-	}
-	if !kindAllowedInFolder(folder, kind) {
-		return body, "", "", fmt.Errorf("selected file type is not allowed in its configured folder")
 	}
 	return body, query.Encode(), "", nil
 }

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+// Proprietary software. No use, copy, modification, distribution, disclosure,
+// or reverse engineering is permitted without prior written authorization
+// from Opensense Ltd.
+
 package main
 
 import (
@@ -8,14 +13,65 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
-func (a *App) currentUserFromProxyBearer(r *http.Request) (*User, error) {
-	proxyToken := parseBearerToken(r.Header.Get("Authorization"))
-	if proxyToken == "" {
+type AgentAuthContext struct {
+	User  *User
+	Agent *AgentAccess
+}
+
+func sessionTimeoutHours(settings *UserSettings) int {
+	if settings == nil {
+		return defaultUserSessionTimeoutHours
+	}
+	if settings.SessionTimeoutHours < 1 || settings.SessionTimeoutHours > maxUserSessionTimeoutHours {
+		return defaultUserSessionTimeoutHours
+	}
+	return settings.SessionTimeoutHours
+}
+
+func sessionExpiryFromStart(start time.Time, settings *UserSettings, fallback time.Duration) time.Time {
+	timeoutHours := sessionTimeoutHours(settings)
+	if timeoutHours < 1 {
+		if fallback <= 0 {
+			fallback = time.Duration(defaultUserSessionTimeoutHours) * time.Hour
+		}
+		return start.Add(fallback)
+	}
+	return start.Add(time.Duration(timeoutHours) * time.Hour)
+}
+
+func (a *App) sessionAndUserFromRequest(r *http.Request) (*Session, *User, error) {
+	cookie, err := r.Cookie(a.cfg.SessionCookieName)
+	if err != nil {
+		return nil, nil, nil
+	}
+	session, err := a.store.FindSessionByTokenHash(SHA256Hex(cookie.Value))
+	if err != nil || session == nil {
+		return nil, nil, err
+	}
+	if session.ExpiresAt.Before(nowUTC()) {
+		_ = a.store.DeleteSessionByTokenHash(session.TokenHash)
+		return nil, nil, nil
+	}
+	user, err := a.store.FindUserByID(session.UserID)
+	if err != nil || user == nil || user.IsSuspended {
+		return nil, nil, err
+	}
+	return session, user, nil
+}
+
+func (a *App) currentAgentFromBearer(r *http.Request) (*AgentAuthContext, error) {
+	agentToken := parseBearerToken(r.Header.Get("Authorization"))
+	if agentToken == "" {
 		return nil, nil
 	}
-	return a.store.FindUserByProxyToken(a.crypto, proxyToken)
+	user, agent, err := a.store.FindAgentByToken(a.crypto, agentToken)
+	if err != nil || user == nil || agent == nil {
+		return nil, err
+	}
+	return &AgentAuthContext{User: user, Agent: agent}, nil
 }
 func (a *App) currentUserFromUserBackendAPIBearer(r *http.Request) (*User, error) {
 	backendToken := parseBearerToken(r.Header.Get("Authorization"))
@@ -38,32 +94,48 @@ func (a *App) requireUserBackendAPIUser(w http.ResponseWriter, r *http.Request) 
 	return user
 }
 func (a *App) currentUserFromSession(r *http.Request) (*User, error) {
-	cookie, err := r.Cookie(a.cfg.SessionCookieName)
-	if err != nil {
-		return nil, nil
-	}
-	session, err := a.store.FindSessionByTokenHash(SHA256Hex(cookie.Value))
-	if err != nil || session == nil {
+	session, user, err := a.sessionAndUserFromRequest(r)
+	if err != nil || session == nil || user == nil {
 		return nil, err
 	}
-	if session.ExpiresAt.Before(nowUTC()) {
-		_ = a.store.DeleteSessionByTokenHash(session.TokenHash)
+	if !session.SecondFactorVerified {
 		return nil, nil
-	}
-	user, err := a.store.FindUserByID(session.UserID)
-	if err != nil || user == nil || user.IsSuspended {
-		return nil, err
 	}
 	return user, nil
 }
+
+func (a *App) currentPendingSecondFactorUserFromSession(r *http.Request) (*Session, *User, error) {
+	session, user, err := a.sessionAndUserFromRequest(r)
+	if err != nil || session == nil || user == nil {
+		return nil, nil, err
+	}
+	if session.SecondFactorVerified {
+		return nil, nil, nil
+	}
+	return session, user, nil
+}
+
 func (a *App) requireSessionUser(w http.ResponseWriter, r *http.Request) *User {
-	user, err := a.currentUserFromSession(r)
+	session, user, err := a.sessionAndUserFromRequest(r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "session_error", err.Error())
 		return nil
 	}
-	if user == nil {
+	if session == nil || user == nil {
 		http.Redirect(w, r, "/", http.StatusFound)
+		return nil
+	}
+	if !session.SecondFactorVerified {
+		http.Redirect(w, r, "/auth/2fa", http.StatusFound)
+		return nil
+	}
+	mustEnroll, err := a.userMustCompleteOrganizationTwoFactor(user)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "organization_policy_error", err.Error())
+		return nil
+	}
+	if mustEnroll && !pathAllowsOrganizationTwoFactorEnrollment(r.URL.Path) {
+		http.Redirect(w, r, twoFactorEnrollmentURLForRequest(r), http.StatusFound)
 		return nil
 	}
 	return user

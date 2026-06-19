@@ -1,0 +1,107 @@
+{{define "policies-page"}}
+<div class="policy-top-grid">
+  <div class="card policy-summary-card">
+    <h2>Policy library</h2>
+    <p>Open an existing policy to review or edit it, or create a new custom policy.</p>
+    {{if .PolicyEditor.Error}}<div class="flash flash-error"><span>{{.PolicyEditor.Error}}</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}
+    {{if eq .PolicyEditor.Deleted "default"}}<div class="flash flash-success"><span>The applied custom policy was deleted. Affected selections have reverted to the system default policy.</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}
+    {{if eq .PolicyEditor.Deleted "custom"}}<div class="flash flash-success"><span>Custom policy deleted.</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}
+    <div class="policy-toolbar skill-download-toolbar">
+      <div class="policy-field skill-download-field">
+        <label for="policy_select">Open policy</label>
+        <select id="policy_select" data-size-to-options="true" data-size-max-ch="75" onchange="selectPolicyForEditing(this)">
+          {{range .PolicyEditor.Options}}<option value="{{.ID}}" data-policy-name="{{.Name}}" data-system-policy="{{.System}}" title="{{.FullLabel}}" {{if .Selected}}selected{{end}}>{{.DisplayLabel}}</option>{{end}}
+        </select>
+      </div>
+      <a class="btn" href="/policies?policy=new">Create new policy</a>
+    </div>
+  </div>
+
+  <div class="card policy-summary-card">
+    <h2>Default policy</h2>
+    <p>Choose which policy applies by default and as failover.</p>
+    <form method="post" action="/policies/default" class="policy-toolbar policy-default-toolbar" data-track-changes="true" data-ajax-form="true" data-ajax-update="policy-default">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div class="policy-field policy-default-field">
+        <label for="default_policy_id">Default policy</label>
+        <select id="default_policy_id" name="default_policy_id" data-size-to-options="true" data-size-max-ch="75">
+          {{range .PolicyEditor.Options}}<option value="{{.ID}}" data-policy-name="{{.Name}}" data-system-policy="{{.System}}" title="{{.FullLabel}}" {{if .IsDefault}}selected{{end}}>{{.DisplayLabel}}</option>{{end}}
+        </select>
+      </div>
+      <button class="btn" type="submit">Set as default policy</button>
+    </form>
+    <div class="form-flash-slot" aria-live="polite">{{if .PolicyEditor.DefaultSaved}}<div class="flash flash-success"><span>Default policy selection saved.</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}</div>
+  </div>
+</div>
+
+<div class="card">
+  <h2 id="policyEditorSelectedTitle">{{if .PolicyEditor.SelectedIsNew}}Create new policy{{else}}{{if .PolicyEditor.SelectedIsSystem}}Viewing: System policy{{else}}Editing: {{.PolicyEditor.SelectedName}}{{end}}{{end}}</h2>
+  {{if .PolicyEditor.SelectedIsSystem}}
+    <p><small>The system policy is fixed, not editable, and limited to read permissions only. Create a custom policy when you need broader access.</small></p>
+  {{else}}
+    <p><small>Choose the capabilities this policy should allow. The proxy translates these selections into the Google API rules applied to your agents.</small></p>
+  {{end}}
+  <form method="post" action="/policies/save" {{if .PolicyEditor.SelectedIsNew}}data-require-complete="true"{{else}}data-track-changes="true" data-ajax-form="true" data-ajax-update="policy-editor"{{end}}>
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <input type="hidden" name="policy_id" value="{{if .PolicyEditor.SelectedIsNew}}{{else}}{{.PolicyEditor.SelectedID}}{{end}}">
+    <div class="policy-toolbar policy-name-toolbar">
+      <div class="policy-field policy-name-field">
+        <label for="policy_name">Policy name</label>
+        <input id="policy_name" type="text" name="name" value="{{if .PolicyEditor.SelectedIsSystem}}{{.PolicyEditor.SelectedName}} - not editable{{else}}{{.PolicyEditor.SelectedName}}{{end}}" {{if .PolicyEditor.SelectedIsSystem}}disabled{{else}}required{{end}}>
+      </div>
+      {{if not .PolicyEditor.SelectedIsSystem}}
+        <button class="btn" type="button" onclick="applySystemDefaultPolicy()">Revert selections to system default</button>
+        <button class="btn" type="submit">Save policy</button>
+      {{end}}
+    </div>
+    <div class="policy-apps">
+      {{range .PolicyEditor.CapabilityGroups}}
+      <section class="policy-app">
+        <button class="policy-app-toggle" type="button" aria-expanded="false" aria-controls="policy_app_{{.Name}}" onclick="togglePolicyApp(this)">
+          <span class="policy-app-label">
+            {{if eq .Name "Calendar"}}<img class="policy-app-icon-img" src="/static/google-workspace-icons/calendar.png" alt="" aria-hidden="true">{{end}}
+            {{if eq .Name "Contacts"}}<img class="policy-app-icon-img" src="/static/google-workspace-icons/contacts.png" alt="" aria-hidden="true">{{end}}
+            {{if eq .Name "Drive"}}<img class="policy-app-icon-img" src="/static/google-workspace-icons/drive.png" alt="" aria-hidden="true">{{end}}
+            {{if eq .Name "Gmail"}}<img class="policy-app-icon-img" src="/static/google-workspace-icons/gmail.png" alt="" aria-hidden="true">{{end}}
+            <span>{{.Name}}</span>
+          </span>
+          <span class="policy-app-arrow" aria-hidden="true">&#9662;</span>
+        </button>
+        <div id="policy_app_{{.Name}}" class="policy-app-body" hidden>
+          {{$showSubgroups := .ShowSubgroups}}
+          {{range .Subgroups}}
+            <div class="policy-subgroup">
+              {{if $showSubgroups}}<h3>{{.Name}}</h3>{{end}}
+              <div class="policy-grid">
+                {{range .Capabilities}}
+                <div class="policy-capability">
+                  <input data-policy-capability="true" data-system-default="{{.SystemDefault}}" type="checkbox" name="capability" value="{{.Key}}" {{if .Checked}}checked{{end}} {{if $.PolicyEditor.SelectedIsSystem}}disabled{{end}}>
+                  <div class="policy-capability-body">
+                    <small class="risk-score"><span>Risk:</span><span class="risk-swatch {{.RiskClass}}" aria-hidden="true"></span><span>{{.RiskLabel}}</span><span class="risk-help" tabindex="0" role="img" aria-label="{{.RiskDescription}}" data-tooltip="{{.RiskDescription}}">(?)</span></small>
+                    <strong>{{.Title}}</strong>
+                    <small>{{.Summary}}{{if .RequiresDriveRefs}} Uses configured allowed folders.{{end}}</small>
+                    <label class="policy-review-control">
+                      <input data-policy-review="true" type="checkbox" name="review_capability" value="{{.Key}}" {{if .ReviewRequired}}checked{{end}} {{if or $.PolicyEditor.SelectedIsSystem (not .Checked)}}disabled{{end}}>
+                      <span>Operations require human review &amp; approval</span>
+                    </label>
+                  </div>
+                </div>
+                {{end}}
+              </div>
+            </div>
+            {{end}}
+        </div>
+      </section>
+      {{end}}
+    </div>
+  </form>
+  <div class="form-flash-slot" aria-live="polite">{{if .PolicyEditor.Saved}}<div class="flash flash-success"><span>Policy saved.</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}</div>
+  {{if and (not .PolicyEditor.SelectedIsSystem) (not .PolicyEditor.SelectedIsNew)}}
+    <form method="post" action="/policies/delete" onsubmit="return confirm('{{if .PolicyEditor.SelectedIsApplied}}This policy is currently applied. Deleting it will revert affected selections to the system default policy. Continue?{{else}}Delete this custom policy?{{end}}');">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="policy_id" value="{{.PolicyEditor.SelectedID}}">
+      <button class="btn warn" type="submit">Delete policy</button>
+    </form>
+  {{end}}
+</div>
+{{end}}

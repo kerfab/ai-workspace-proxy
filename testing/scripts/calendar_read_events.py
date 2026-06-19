@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+# Proprietary software. No use, copy, modification, distribution, disclosure,
+# or reverse engineering is permitted without prior written authorization
+# from Opensense Ltd.
+
 from urllib.parse import quote
 
 from calendar_live_helpers import agent_json, event_body, run_live_calendar_scenario

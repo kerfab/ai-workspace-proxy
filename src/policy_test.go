@@ -1,3 +1,8 @@
+// Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+// Proprietary software. No use, copy, modification, distribution, disclosure,
+// or reverse engineering is permitted without prior written authorization
+// from Opensense Ltd.
+
 package main
 
 import (
@@ -14,12 +19,21 @@ func TestValidatePolicyCatalog(t *testing.T) {
 	}
 }
 
-func TestSystemDefaultPolicyMatchesLowRiskCapabilities(t *testing.T) {
+func TestSystemDefaultPolicyIncludesOnlyApprovedDefaults(t *testing.T) {
+	foundCalendarCreateSelf := false
 	for _, capability := range PolicyCatalog() {
-		wantDefault := policyRiskScore(capability.Key) == 1
-		if capability.SystemDefault != wantDefault {
-			t.Fatalf("capability %q SystemDefault=%v, want %v for risk score %d", capability.Key, capability.SystemDefault, wantDefault, policyRiskScore(capability.Key))
+		if capability.SystemDefault && policyRiskScore(capability.Key) != 1 {
+			t.Fatalf("capability %q SystemDefault=%v, want false for risk score %d", capability.Key, capability.SystemDefault, policyRiskScore(capability.Key))
 		}
+		if capability.Key == "calendar_events_create_self" {
+			foundCalendarCreateSelf = true
+			if capability.SystemDefault {
+				t.Fatalf("capability %q SystemDefault=%v, want false because the system policy must remain read-only", capability.Key, capability.SystemDefault)
+			}
+		}
+	}
+	if !foundCalendarCreateSelf {
+		t.Fatal("calendar_events_create_self capability not found in policy catalog")
 	}
 }
 
@@ -117,6 +131,27 @@ func TestPolicyEngineContactsReadPermissions(t *testing.T) {
 	assertPolicyAllowed(t, contacts, http.MethodGet, "/v1/otherContacts:search", nil, ctx)
 	assertPolicyDenied(t, contacts, http.MethodGet, "/v1/people/me/connections", nil, ctx, "no policy capability")
 	assertPolicyDenied(t, contacts, http.MethodPost, "/v1/people:createContact", []byte(`{}`), ctx, "no policy capability")
+}
+
+func TestPolicyEngineMarksReviewRequiredDecision(t *testing.T) {
+	engine, err := NewPolicyEngineWithReview([]string{"gmail_send", "gmail_messages_read"}, []string{"gmail_send"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send, err := engine.EvaluateDecision(http.MethodPost, "/gmail/v1/users/me/messages/send", []byte(`{}`), PolicyEvalContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !send.Allowed || send.CapabilityKey != "gmail_send" || !send.RequiresHumanApproval {
+		t.Fatalf("expected gmail_send to require human approval, got %+v", send)
+	}
+	read, err := engine.EvaluateDecision(http.MethodGet, "/gmail/v1/users/me/messages", nil, PolicyEvalContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !read.Allowed || read.RequiresHumanApproval {
+		t.Fatalf("expected gmail read to be allowed without human approval, got %+v", read)
+	}
 }
 
 func TestPolicyEngineGmailWritePermissions(t *testing.T) {
@@ -421,7 +456,7 @@ func TestPolicyEngineStructuredFileNativeDriveRoutes(t *testing.T) {
 
 	slidesDelete := newTestPolicyEngine(t, []string{"slides_delete"})
 	assertPolicyAllowed(t, slidesDelete, http.MethodDelete, "/drive/v3/files/slide123", nil, driveKindCtx("slides"))
-	assertPolicyDenied(t, slidesDelete, http.MethodDelete, "/drive/v3/files/file123", nil, driveKindCtx("drive"), "non-Google-native files")
+	assertPolicyDenied(t, slidesDelete, http.MethodDelete, "/drive/v3/files/file123", nil, driveKindCtx("drive"), "Other file types")
 }
 
 func TestPolicyEngineSheetsCreateAndEdit(t *testing.T) {

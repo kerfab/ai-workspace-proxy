@@ -1,0 +1,112 @@
+{{define "admin-users-page"}}
+<div class="card admin-users-card" data-admin-users-page>
+  <h2>Manage accounts</h2>
+  <p>Review user accounts under <strong>{{.OrganizationAdmin.Domain}}</strong>, sort them by the fields that matter, and prepare account-level actions from one place.</p>
+  <div class="admin-users-toolbar">
+    <div class="admin-users-toolbar-field admin-users-search-field">
+      <label for="adminUserSearch">Search</label>
+      <input id="adminUserSearch" type="text" placeholder="Search name or email" autocomplete="off">
+    </div>
+    <div class="admin-users-toolbar-field">
+      <label for="adminUserRoleFilter">Role</label>
+      <select id="adminUserRoleFilter">
+        <option value="">All roles</option>
+        <option value="administrator">Administrator</option>
+        <option value="user">User</option>
+      </select>
+    </div>
+    <div class="admin-users-toolbar-field">
+      <label for="adminUserStatusFilter">Status</label>
+      <select id="adminUserStatusFilter">
+        <option value="">All statuses</option>
+        <option value="active">Active</option>
+        <option value="suspended">Suspended</option>
+        <option value="pending">Pending</option>
+      </select>
+    </div>
+    <div class="admin-users-toolbar-field admin-users-page-size-field">
+      <label for="adminUserPageSize">Rows per page</label>
+      <select id="adminUserPageSize">
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+        <option value="150">150</option>
+        <option value="200">200</option>
+        <option value="250">250</option>
+      </select>
+    </div>
+  </div>
+  <p id="adminUsersCount" class="admin-users-count">Loading organization accounts...</p>
+  <div class="admin-users-table-wrap">
+    <table class="admin-users-table">
+      <colgroup>
+        <col data-admin-column="name" style="width:22%;">
+        <col data-admin-column="email" style="width:28%;">
+        <col data-admin-column="status" style="width:12%;">
+        <col data-admin-column="role" style="width:16%;">
+        <col data-admin-column="last_activity" style="width:22%;">
+        <col data-admin-column="actions" style="width:6.75rem;">
+      </colgroup>
+      <thead>
+        <tr>
+          <th>
+            <div class="admin-users-head-cell"><span>Name</span><button class="admin-users-sort" type="button" data-admin-sort="name" aria-label="Sort by Name" aria-pressed="false">↑↓</button></div>
+            <span class="admin-users-resize-handle" data-admin-column-resize="name" data-min-width="120" aria-hidden="true"></span>
+          </th>
+          <th>
+            <div class="admin-users-head-cell"><span>Email</span><button class="admin-users-sort" type="button" data-admin-sort="email" aria-label="Sort by Email" aria-pressed="false">↑↓</button></div>
+            <span class="admin-users-resize-handle" data-admin-column-resize="email" data-min-width="150" aria-hidden="true"></span>
+          </th>
+          <th>
+            <div class="admin-users-head-cell"><span>Status</span><button class="admin-users-sort" type="button" data-admin-sort="status" aria-label="Sort by Status" aria-pressed="false">↑↓</button></div>
+            <span class="admin-users-resize-handle" data-admin-column-resize="status" data-min-width="105" aria-hidden="true"></span>
+          </th>
+          <th>
+            <div class="admin-users-head-cell"><span>Role</span><button class="admin-users-sort" type="button" data-admin-sort="role" aria-label="Sort by Role" aria-pressed="false">↑↓</button></div>
+            <span class="admin-users-resize-handle" data-admin-column-resize="role" data-min-width="105" aria-hidden="true"></span>
+          </th>
+          <th>
+            <div class="admin-users-head-cell"><span>Last activity</span><button class="admin-users-sort" type="button" data-admin-sort="last_activity" aria-label="Sort by Last activity" aria-pressed="false">↑↓</button></div>
+            <span class="admin-users-resize-handle" data-admin-column-resize="last_activity" data-min-width="120" aria-hidden="true"></span>
+          </th>
+          <th class="admin-users-actions-head">
+            <div class="admin-users-head-cell"><span>Actions</span></div>
+            <span class="admin-users-resize-handle" data-admin-column-resize="actions" data-min-width="88" aria-hidden="true"></span>
+          </th>
+        </tr>
+      </thead>
+      <tbody data-admin-users-body>
+        {{range .AdminUserRows}}
+        <tr data-admin-user-row data-name="{{.Name}}" data-email="{{.Email}}" data-status="{{.StatusKey}}" data-role="{{.RoleKey}}" data-last-activity="{{.LastActivityUnix}}" data-search="{{.Name}} {{.Email}}">
+          <td>
+            <div class="admin-users-name">{{.Name}}</div>
+          </td>
+          <td><a href="{{.EditURL}}" class="admin-users-email-link">{{.Email}}</a></td>
+          <td><span class="{{.StatusClass}}">{{.Status}}</span></td>
+          <td>{{.Role}}</td>
+          <td class="admin-users-last-activity">{{.LastActivityDisplay}}</td>
+          <td class="admin-users-actions-cell">
+            <a class="admin-users-icon-btn" href="{{.EditURL}}" title="Review and edit this user account" aria-label="Review and edit this user account">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0 0-3L17.5 5a2.1 2.1 0 0 0-3 0L4 15.5V20z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M13.5 6.5l4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </a>
+            <button class="admin-users-icon-btn" type="button" disabled title="User-only log review will be added here in a later pass." aria-label="User-only log review will be added here in a later pass.">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M6 5h12"></path><path d="M6 10h12"></path><path d="M6 15h8"></path><path d="M4 3h16v18H4z"></path>
+              </svg>
+            </button>
+          </td>
+        </tr>
+        {{end}}
+        <tr id="adminUsersEmptyState" hidden>
+          <td colspan="6">No user accounts match the current filters.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="admin-users-pagination-row">
+    <div id="adminUsersPagination" class="admin-users-pagination"></div>
+  </div>
+</div>
+{{end}}

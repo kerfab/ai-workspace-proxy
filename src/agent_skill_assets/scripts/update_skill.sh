@@ -1,8 +1,63 @@
 #!/bin/sh
+# Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+# Proprietary software. No use, copy, modification, distribution, disclosure,
+# or reverse engineering is permitted without prior written authorization
+# from Opensense Ltd.
+
 set -eu
 
 ZIP_PATH="${AI_WORKSPACE_PROXY_SKILL_ZIP:-/tmp/ai-workspace-proxy-agent-skill.zip}"
 NEW_SKILL_DIR="${AI_WORKSPACE_PROXY_NEW_SKILL_DIR:-/tmp/ai-workspace-proxy-skill}"
+AGENT_MOTIVE="${AIWP_AGENT_MOTIVE:-}"
+SKILL_PLATFORM="${AI_WORKSPACE_PROXY_SKILL_PLATFORM:-}"
+
+usage() {
+  cat <<'EOF'
+Usage: update_skill.sh [--agent-motive MOTIVE] [--platform generic|openclaw]
+
+Refresh the installed AI Workspace Proxy skill package.
+
+Options:
+  --agent-motive TEXT       One or two sentences explaining why the update is being made
+  --platform VALUE          Skill platform to refresh; detected automatically when omitted
+  -h, --help                Show this help
+
+The motive can also be supplied with AIWP_AGENT_MOTIVE. Command-line options
+override environment variables.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --agent-motive)
+      [ "$#" -ge 2 ] || { echo "Missing value for --agent-motive" >&2; exit 2; }
+      AGENT_MOTIVE="$2"
+      shift 2
+      ;;
+    --agent-motive=*)
+      AGENT_MOTIVE="${1#--agent-motive=}"
+      shift
+      ;;
+    --platform)
+      [ "$#" -ge 2 ] || { echo "Missing value for --platform" >&2; exit 2; }
+      SKILL_PLATFORM="$2"
+      shift 2
+      ;;
+    --platform=*)
+      SKILL_PLATFORM="${1#--platform=}"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
 
 is_skill_dir() {
   dir="$1"
@@ -66,6 +121,22 @@ SKILL_DIR="$(find_skill_dir)"
 test -n "$SKILL_DIR"
 is_skill_dir "$SKILL_DIR"
 
+if [ -z "$SKILL_PLATFORM" ]; then
+  if grep -q 'OpenClaw' "$SKILL_DIR/scripts/install_skill.sh"; then
+    SKILL_PLATFORM="openclaw"
+  else
+    SKILL_PLATFORM="generic"
+  fi
+fi
+
+case "$SKILL_PLATFORM" in
+  generic|openclaw) ;;
+  *)
+    echo "Invalid platform: $SKILL_PLATFORM" >&2
+    exit 2
+    ;;
+esac
+
 home_dir="${HOME:-}"
 if [ -n "$home_dir" ] && [ "$SKILL_DIR" = "$home_dir" ]; then
   echo "Refusing unsafe skill directory: $SKILL_DIR" >&2
@@ -79,7 +150,8 @@ case "$SKILL_DIR" in
     ;;
 esac
 
-python3 "$SKILL_DIR/scripts/workspace_proxy_tool.py" proxy download-skill --save-to "$ZIP_PATH"
+AIWP_AGENT_MOTIVE="$AGENT_MOTIVE" \
+python3 "$SKILL_DIR/scripts/workspace_proxy_tool.py" proxy download-skill --platform "$SKILL_PLATFORM" --save-to "$ZIP_PATH"
 
 rm -rf "$NEW_SKILL_DIR"
 mkdir -p "$NEW_SKILL_DIR"

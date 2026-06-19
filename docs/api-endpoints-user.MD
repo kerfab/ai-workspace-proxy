@@ -18,220 +18,40 @@ Dashboard helper APIs use the browser session cookie plus CSRF token. They are i
 
 ## Privileged Policy API
 
-These endpoints are for user-owned backend tools and tests. Standard agent Workspace API keys are rejected.
+These endpoints are for user-owned backend tools and tests. Agent API keys are rejected.
+
+```http
+GET    /api/user/policies
+POST   /api/user/policies
+GET    /api/user/policies/{policy_id}
+PUT    /api/user/policies/{policy_id}
+PATCH  /api/user/policies/{policy_id}
+DELETE /api/user/policies/{policy_id}
+POST   /api/user/policies/{policy_id}/apply
+```
 
 The `system` policy is immutable. It cannot be created, updated, or deleted. It can be applied as the user's default policy or to a connected Workspace.
 
-### List Policies
-
-```http
-GET /api/user/policies
-```
-
-Authentication:
-
-```http
-Authorization: Bearer <user_backend_api_token>
-```
-
-Response:
-
-```json
-{
-  "policies": [
-    {
-      "id": "system",
-      "name": "Default system policy",
-      "capabilities": ["calendar_read"],
-      "system": true,
-      "immutable": true,
-      "is_default": true
-    }
-  ]
-}
-```
-
-### Create Custom Policy
-
-```http
-POST /api/user/policies
-```
-
-Authentication:
-
-```http
-Authorization: Bearer <user_backend_api_token>
-Content-Type: application/json
-```
-
-Request:
+Create and update requests accept:
 
 ```json
 {
   "name": "Policy name",
-  "capabilities": ["gmail_messages_read", "calendar_read"]
+  "capabilities": ["gmail_messages_read", "calendar_read", "gmail_send"],
+  "review_required_capabilities": ["gmail_send"]
 }
 ```
 
-The server generates the policy ID. Supplying an `id` is rejected. Supplying `id: "system"` is rejected because the system policy is immutable.
-
-Response:
-
-```json
-{
-  "policy": {
-    "id": "generated-policy-id",
-    "name": "Policy name",
-    "capabilities": ["calendar_read", "gmail_messages_read"],
-    "system": false,
-    "immutable": false,
-    "is_default": false,
-    "created_at": "2026-06-13T10:00:00Z",
-    "updated_at": "2026-06-13T10:00:00Z"
-  }
-}
-```
-
-### Get Policy
-
-```http
-GET /api/user/policies/{policy_id}
-```
-
-Authentication:
-
-```http
-Authorization: Bearer <user_backend_api_token>
-```
-
-Use `system` as `{policy_id}` to retrieve the immutable system policy.
-
-### Update Custom Policy
-
-```http
-PUT /api/user/policies/{policy_id}
-PATCH /api/user/policies/{policy_id}
-```
-
-Authentication:
-
-```http
-Authorization: Bearer <user_backend_api_token>
-Content-Type: application/json
-```
-
-Request:
-
-```json
-{
-  "name": "Updated policy name",
-  "capabilities": ["gmail_messages_read", "calendar_read"]
-}
-```
-
-Rules:
-
-- `{policy_id}` must be a custom policy owned by the authenticated user.
-- `system` cannot be updated.
-- If the body contains `id`, it must match `{policy_id}`.
-- Unknown capability keys are rejected.
-
-### Delete Custom Policy
-
-```http
-DELETE /api/user/policies/{policy_id}
-```
-
-Authentication:
-
-```http
-Authorization: Bearer <user_backend_api_token>
-```
-
-Rules:
-
-- `{policy_id}` must be a custom policy owned by the authenticated user.
-- `system` cannot be deleted.
-- If the deleted policy was applied as the default policy or to a Workspace, those assignments are reverted to `system`.
-
-Response:
-
-```json
-{
-  "deleted_policy_id": "deleted-policy-id",
-  "reverted_to": "system",
-  "reverted_applied": true
-}
-```
-
-### Apply Policy
-
-```http
-POST /api/user/policies/{policy_id}/apply
-```
-
-Authentication:
-
-```http
-Authorization: Bearer <user_backend_api_token>
-Content-Type: application/json
-```
-
-Apply a policy as the user default policy with an empty body or `{}`:
-
-```json
-{}
-```
-
-Apply a policy to one connected Workspace account by friendly name or email:
-
-```json
-{
-  "workspace": "work"
-}
-```
-
-The endpoint accepts `system` as `{policy_id}`.
-
-Response when applied as default:
-
-```json
-{
-  "applied_as": "default",
-  "policy": {
-    "id": "system",
-    "name": "Default system policy"
-  }
-}
-```
-
-Response when applied to a Workspace:
-
-```json
-{
-  "applied_as": "workspace",
-  "workspace": "person@example.com",
-  "policy": {
-    "id": "system",
-    "name": "Default system policy"
-  }
-}
-```
+`review_required_capabilities` is optional. Every listed capability must also appear in `capabilities`.
 
 ## Privileged Workspace API
 
-These endpoints are for user-owned backend tools and tests. Standard agent Workspace API keys are rejected.
+These endpoints are for user-owned backend tools and tests. Agent API keys are rejected.
 
 ### List Connected Workspaces
 
 ```http
 GET /api/user/workspaces
-```
-
-Authentication:
-
-```http
-Authorization: Bearer <user_backend_api_token>
 ```
 
 Response:
@@ -241,9 +61,9 @@ Response:
   "workspaces": [
     {
       "email": "person@example.com",
-      "name": "work",
-      "policy_id": "system",
-      "policy_name": "Default system policy"
+      "name": "Work",
+      "auth_connected": true,
+      "connection_status": "Active"
     }
   ]
 }
@@ -255,39 +75,27 @@ Response:
 GET /api/user/workspaces?workspace=<Workspace friendly name or Workspace email>
 ```
 
-Authentication:
-
-```http
-Authorization: Bearer <user_backend_api_token>
-```
-
 Response:
 
 ```json
 {
   "workspace": {
     "email": "person@example.com",
-    "name": "work",
-    "policy_id": "system",
-    "policy_name": "Default system policy"
+    "name": "Work",
+    "auth_connected": true,
+    "connection_status": "Active"
   }
 }
 ```
 
 ## Privileged Drive Folder API
 
-These endpoints are for user-owned backend tools and tests. Standard agent Workspace API keys are rejected.
+These endpoints are for user-owned backend tools and tests. Agent API keys are rejected.
 
-### List Allowed Drive Folder References
+### List Registered Drive Folder References
 
 ```http
 GET /api/user/drive-folders?workspace=<Workspace friendly name or Workspace email>
-```
-
-Authentication:
-
-```http
-Authorization: Bearer <user_backend_api_token>
 ```
 
 Response:
@@ -296,23 +104,18 @@ Response:
 {
   "workspace": {
     "email": "person@example.com",
-    "name": "work",
-    "policy_id": "system",
-    "policy_name": "Default system policy"
+    "name": "Work",
+    "auth_connected": true,
+    "connection_status": "Active"
   },
   "drive_folders": [
     {
       "id": "dfr_...",
       "workspace_email": "person@example.com",
-      "reference_name": "Test Drive",
-      "reference_key": "test drive",
+      "reference_name": "Test Folder",
+      "reference_key": "test folder",
       "folder_id": "folder-id",
       "folder_name": "Live Test Folder",
-      "allow_docs": true,
-      "allow_sheets": false,
-      "allow_slides": false,
-      "allow_drive_files": true,
-      "allowed_types": ["docs", "drive_files"],
       "created_at": "2026-06-13T10:00:00Z",
       "updated_at": "2026-06-13T10:00:00Z"
     }
@@ -320,13 +123,70 @@ Response:
 }
 ```
 
-This endpoint lists the configured root folder references only. Use the agent Drive Folder Tree API when an AI agent needs the cached subfolder tree.
+This endpoint lists registered root references only. Use the agent Drive Folder Tree API when an AI agent needs the cached subfolder tree.
+
+## Privileged Agent Grant API
+
+These endpoints are for user-owned backend tools and tests. Agent API keys are rejected.
+
+```http
+GET /api/user/agents
+GET /api/user/agents/{agent_id}/grants
+GET /api/user/agents/{agent_id}/grants?workspace=<Workspace>
+PUT /api/user/agents/{agent_id}/grants
+PATCH /api/user/agents/{agent_id}/grants
+GET /api/user/agents/{agent_id}/grants/drive-folders?workspace=<Workspace>
+PUT /api/user/agents/{agent_id}/grants/drive-folders
+PATCH /api/user/agents/{agent_id}/grants/drive-folders
+```
+
+Grant update body:
+
+```json
+{
+  "workspace": "Work",
+  "policy_id": "system",
+  "enabled": true,
+  "require_agent_motive": false
+}
+```
+
+Rules:
+
+- omit `enabled` or set it to `true` to create or update one grant
+- set `enabled` to `false` to remove the grant for that Workspace
+- `require_agent_motive` controls agent accountability for that one agent/Workspace grant
+
+Example grant response:
+
+```json
+{
+  "grant": {
+    "agent_id": "agt_...",
+    "workspace_email": "person@example.com",
+    "policy_id": "system",
+    "policy_name": "Default system policy",
+    "require_agent_motive": false,
+    "created_at": "2026-06-13T10:00:00Z",
+    "updated_at": "2026-06-13T10:00:00Z"
+  }
+}
+```
+
+Drive folder grant update body:
+
+```json
+{
+  "workspace": "Work",
+  "folder_ref_ids": ["dfr_..."]
+}
+```
+
+The Drive folder grant endpoint returns all registered Drive folders for that Workspace with an `allowed` boolean, plus the current `allowed_drive_folders` list.
 
 ## Dashboard Helper API
 
-These endpoints are used by the web dashboard. They require a valid browser session and CSRF token where applicable.
-
-They are documented here so testers understand the full user-level API surface, but backend test clients should prefer the privileged backend API key where such an endpoint exists.
+These endpoints are used by the web dashboard. They require a valid browser session and, where noted, a CSRF token.
 
 ### Create Agent Skill Install Token
 
@@ -334,14 +194,10 @@ They are documented here so testers understand the full user-level API surface, 
 POST /api/agent-skill/install-token
 ```
 
-Authentication:
-
-- browser session cookie
-- CSRF token in form field `csrf_token`
-
 Form fields:
 
 - `platform`: `generic` or `openclaw`
+- `agent_id`: target agent
 
 Response:
 
@@ -358,15 +214,11 @@ Response:
 }
 ```
 
-### Download Agent Workspace API Config
+### Download Agent Config
 
 ```http
-GET /api/config/agents-workspace-api-access/download
+GET /api/config/agents-workspace-api-access/download?agent=<agent_id>
 ```
-
-Authentication:
-
-- browser session cookie
 
 Downloads:
 
@@ -374,30 +226,30 @@ Downloads:
 agents-workspace-api-access.config.json
 ```
 
-This file contains the standard agent Workspace API key and connected Workspace list.
+This file contains the selected agent's API key plus the Workspace list/scoping needed by the generated skill.
 
-### Rotate Agent Workspace API Key
+Example:
 
-```http
-POST /api/config/agents-workspace-api-access/rotate
+```json
+{
+  "proxy_url": "http://localhost:8080",
+  "agent_api_token": "atk_...",
+  "workspaces": [
+    {
+      "email": "person@example.com",
+      "name": "Work",
+      "policy_id": "system",
+      "policy_name": "Default system policy"
+    }
+  ]
+}
 ```
 
-Authentication:
-
-- browser session cookie
-- CSRF token in form field `csrf_token`
-
-Rotation immediately invalidates the previous standard agent Workspace API key.
-
-### Download User Backend API Config
+### Download User Backend Config
 
 ```http
 GET /api/config/user-backend-api-access/download
 ```
-
-Authentication:
-
-- browser session cookie
 
 Downloads:
 
@@ -405,18 +257,21 @@ Downloads:
 user-backend-api-access.config.json
 ```
 
-This file contains the end-user backend API key.
+Example:
+
+```json
+{
+  "config_type": "user_backend_api_access",
+  "proxy_url": "http://localhost:8080",
+  "user_backend_api_token": "ubk_..."
+}
+```
 
 ### Rotate User Backend API Key
 
 ```http
 POST /api/config/user-backend-api-access/rotate
 ```
-
-Authentication:
-
-- browser session cookie
-- CSRF token in form field `csrf_token`
 
 Rotation immediately invalidates the previous end-user backend API key.
 
@@ -433,7 +288,7 @@ Error responses are JSON:
 
 Common statuses:
 
-- `400`: invalid JSON, invalid policy, unknown capability, or attempt to mutate `system`
+- `400`: invalid JSON, invalid policy, or invalid request body
 - `401`: missing or invalid end-user backend API key
-- `404`: policy or Workspace not found
+- `404`: policy, Workspace, or agent not found
 - `405`: unsupported HTTP method

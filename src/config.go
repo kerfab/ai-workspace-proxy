@@ -1,3 +1,8 @@
+// Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+// Proprietary software. No use, copy, modification, distribution, disclosure,
+// or reverse engineering is permitted without prior written authorization
+// from Opensense Ltd.
+
 package main
 
 import (
@@ -11,14 +16,15 @@ import (
 )
 
 const (
-	defaultAppName           = "AI Workspace Proxy"
-	defaultBindAddr          = ":8080"
-	defaultDBPath            = "./db/ai_workspace_proxy.sqlite3"
-	defaultDeniedLogPath     = "./logs/denied.log"
-	defaultSessionCookieName = "ai_workspace_proxy_session"
-	defaultSessionTTLHours   = 168
-	defaultHTTPTimeoutSec    = 30
-	defaultMaxRequestBody    = 10 * 1024 * 1024
+	defaultAppName                 = "AI Workspace Proxy"
+	defaultBindAddr                = ":8080"
+	defaultDBPath                  = "./db/ai_workspace_proxy.sqlite3"
+	defaultSessionCookieName       = "ai_workspace_proxy_session"
+	defaultSessionTTLHours         = 168
+	defaultUserSessionTimeoutHours = 24
+	maxUserSessionTimeoutHours     = 8760
+	defaultHTTPTimeoutSec          = 30
+	defaultMaxRequestBody          = 10 * 1024 * 1024
 
 	googleAuthURL     = "https://accounts.google.com/o/oauth2/v2/auth"
 	googleTokenURL    = "https://oauth2.googleapis.com/token"
@@ -38,7 +44,6 @@ type Config struct {
 	BindAddr            string
 	BaseURL             string
 	DBPath              string
-	DeniedLogPath       string
 	SessionCookieName   string
 	CookieSecure        bool
 	SessionTTL          time.Duration
@@ -59,7 +64,6 @@ func LoadConfig() (*Config, error) {
 		BindAddr:              getenvDefault("APP_BIND_ADDR", defaultBindAddr),
 		BaseURL:               strings.TrimRight(os.Getenv("APP_BASE_URL"), "/"),
 		DBPath:                getenvDefault("DB_PATH", defaultDBPath),
-		DeniedLogPath:         getenvDefault("DENIED_LOG_PATH", defaultDeniedLogPath),
 		SessionCookieName:     getenvDefault("SESSION_COOKIE_NAME", defaultSessionCookieName),
 		CookieSecure:          strings.EqualFold(getenvDefault("COOKIE_SECURE", "false"), "true"),
 		SessionTTL:            time.Duration(getenvIntDefault("SESSION_TTL_HOURS", defaultSessionTTLHours)) * time.Hour,

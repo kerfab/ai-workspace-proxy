@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+# Proprietary software. No use, copy, modification, distribution, disclosure,
+# or reverse engineering is permitted without prior written authorization
+# from Opensense Ltd.
+
 """Live positive/negative proxy-policy tests keyed by AIWP_COVERAGE_ITEM_ID."""
 
 import argparse
@@ -41,9 +46,10 @@ class LivePolicyPermissionTest:
         self.created_policies = []
         self.original_policy_id = ""
         self.drive_ref = None
+        self.original_drive_folder_ref_ids = None
 
     def run(self):
-        self.original_policy_id = self.workspace_policy_id()
+        self.original_policy_id = self.agent_grant_policy_id()
         print(f"Workspace: {self.cfg['workspace']}")
         print(f"Original policy: {self.original_policy_id}")
         failure = None
@@ -71,15 +77,15 @@ class LivePolicyPermissionTest:
         return policy_id
 
     def apply_policy(self, policy_id):
-        apply_policy_to_workspace(self.cfg, policy_id)
+        apply_policy_to_agent_grant(self.cfg, policy_id)
         print(f"Applied temporary policy: {policy_id}")
 
-    def workspace_policy_id(self):
-        _, payload = backend_json(self.cfg, "GET", f"/api/user/workspaces?{urlencode({'workspace': self.cfg['workspace']})}")
-        workspace = payload.get("workspace")
-        if not isinstance(workspace, dict):
-            raise TestFailure(f"Workspace lookup response did not contain a workspace object: {payload}")
-        policy_id = str(workspace.get("policy_id") or "system").strip()
+    def agent_grant_policy_id(self):
+        _, payload = backend_json(self.cfg, "GET", f"/api/user/agents/{quote(self.cfg['agent_id'], safe='')}/grants?{urlencode({'workspace': self.cfg['workspace']})}")
+        grant = payload.get("grant")
+        if not isinstance(grant, dict):
+            raise TestFailure(f"Agent grant lookup response did not contain a grant object: {payload}")
+        policy_id = str(grant.get("policy_id") or "system").strip()
         return policy_id or "system"
 
     def ensure_drive_ref(self):
@@ -95,6 +101,7 @@ class LivePolicyPermissionTest:
             reference_name = str(folder.get("reference_name") or "").strip()
             if "test" in reference_name.lower():
                 self.drive_ref = folder
+                self.ensure_agent_drive_folder_grant(folder)
                 print(f"Allowed Drive folder: {reference_name}")
                 return folder
         available = ", ".join(
@@ -105,9 +112,40 @@ class LivePolicyPermissionTest:
         raise TestFailure(f"No allowed Drive folder reference containing 'Test' was found. Available references: {available}")
 
     def require_folder_type(self, field, label):
-        ref = self.ensure_drive_ref()
-        if ref.get(field) is not True:
-            raise TestFailure(f"Allowed Drive folder {ref.get('reference_name')!r} must allow {label} for this live test")
+        _ = field
+        _ = label
+        self.ensure_drive_ref()
+
+    def agent_drive_folder_grant_ref_ids(self):
+        _, payload = backend_json(
+            self.cfg,
+            "GET",
+            f"/api/user/agents/{quote(self.cfg['agent_id'], safe='')}/grants/drive-folders?{urlencode({'workspace': self.cfg['workspace']})}",
+        )
+        folders = payload.get("drive_folders")
+        if not isinstance(folders, list):
+            raise TestFailure(f"Agent Drive folder grant lookup response did not contain drive_folders: {payload}")
+        return [
+            str(folder.get("id") or "").strip()
+            for folder in folders
+            if isinstance(folder, dict) and folder.get("allowed") is True and str(folder.get("id") or "").strip()
+        ]
+
+    def ensure_agent_drive_folder_grant(self, folder):
+        folder_ref_id = str(folder.get("id") or "").strip()
+        if not folder_ref_id:
+            raise TestFailure(f"Drive folder response did not contain id: {folder}")
+        if self.original_drive_folder_ref_ids is None:
+            self.original_drive_folder_ref_ids = self.agent_drive_folder_grant_ref_ids()
+        next_ids = list(self.original_drive_folder_ref_ids)
+        if folder_ref_id not in next_ids:
+            next_ids.append(folder_ref_id)
+        backend_json(
+            self.cfg,
+            "PUT",
+            f"/api/user/agents/{quote(self.cfg['agent_id'], safe='')}/grants/drive-folders",
+            {"workspace": self.cfg["workspace"], "folder_ref_ids": next_ids},
+        )
 
     def create_drive_text_file(self, label):
         self.require_folder_type("allow_drive_files", "Drive files")
@@ -305,10 +343,21 @@ class LivePolicyPermissionTest:
         self.created_files = []
         if self.original_policy_id:
             try:
-                apply_policy_to_workspace(self.cfg, self.original_policy_id)
+                apply_policy_to_agent_grant(self.cfg, self.original_policy_id)
                 print(f"Restored original policy: {self.original_policy_id}")
             except Exception as exc:
                 print(f"WARN: could not restore original policy {self.original_policy_id}: {exc}", file=sys.stderr)
+        if self.original_drive_folder_ref_ids is not None:
+            try:
+                backend_json(
+                    self.cfg,
+                    "PUT",
+                    f"/api/user/agents/{quote(self.cfg['agent_id'], safe='')}/grants/drive-folders",
+                    {"workspace": self.cfg["workspace"], "folder_ref_ids": self.original_drive_folder_ref_ids},
+                )
+                print("Restored original agent Drive folder grants")
+            except Exception as exc:
+                print(f"WARN: could not restore original agent Drive folder grants: {exc}", file=sys.stderr)
         for policy_id in reversed(self.created_policies):
             delete_policy(self.cfg, policy_id)
             print(f"Cleanup requested for policy: {policy_id}")
@@ -655,21 +704,24 @@ def load_test_config(args):
     user_config = load_json(Path(args.user_config))
     legacy_config = load_json(Path(args.legacy_config))
     proxy_url = first_non_empty(os.environ.get("AIWP_TEST_BASE_URL"), value(agent_config, "proxy_url"), value(user_config, "proxy_url"), value(legacy_config, "proxy_url"))
-    proxy_token = first_non_empty(os.environ.get("AIWP_TEST_PROXY_TOKEN"), value(agent_config, "proxy_token"), value(legacy_config, "proxy_token"))
+    agent_token = first_non_empty(os.environ.get("AIWP_TEST_AGENT_API_TOKEN"), value(agent_config, "agent_api_token"))
     backend_token = first_non_empty(os.environ.get("AIWP_TEST_USER_BACKEND_API_TOKEN"), value(user_config, "user_backend_api_token"), value(legacy_config, "user_backend_api_token"))
+    agent_id = first_non_empty(os.environ.get("AIWP_TEST_AGENT_ID"), value(agent_config, "agent_id"))
     workspace = first_non_empty(os.environ.get("AIWP_TEST_WORKSPACE"), single_workspace_selector(agent_config), single_workspace_selector(legacy_config))
     missing = []
     if not proxy_url:
         missing.append("proxy_url / AIWP_TEST_BASE_URL")
-    if not proxy_token:
-        missing.append("proxy_token / AIWP_TEST_PROXY_TOKEN")
+    if not agent_token:
+        missing.append("agent_api_token / AIWP_TEST_AGENT_API_TOKEN")
+    if not agent_id:
+        missing.append("agent_id / AIWP_TEST_AGENT_ID")
     if not backend_token:
         missing.append("user_backend_api_token / AIWP_TEST_USER_BACKEND_API_TOKEN")
     if not workspace:
         missing.append("workspace / AIWP_TEST_WORKSPACE")
     if missing:
         raise TestFailure("Missing live-test configuration: " + ", ".join(missing))
-    return {"proxy_url": proxy_url.rstrip("/"), "proxy_token": proxy_token, "backend_token": backend_token, "workspace": workspace}
+    return {"proxy_url": proxy_url.rstrip("/"), "agent_token": agent_token, "backend_token": backend_token, "agent_id": agent_id, "workspace": workspace}
 
 
 def request_json(base_url, method, path, token, body=None, expect_status=None):
@@ -740,7 +792,7 @@ def backend_json(cfg, method, path, body=None, expect_status=None):
 
 
 def agent_json(cfg, method, path, body=None, expect_status=None):
-    return request_json(cfg["proxy_url"], method, path, cfg["proxy_token"], body, expect_status)
+    return request_json(cfg["proxy_url"], method, path, cfg["agent_token"], body, expect_status)
 
 
 def create_policy(cfg, name, capabilities):
@@ -754,9 +806,10 @@ def create_policy(cfg, name, capabilities):
     return str(policy["id"])
 
 
-def apply_policy_to_workspace(cfg, policy_id):
-    backend_json(cfg, "POST", f"/api/user/policies/{quote(policy_id, safe='')}/apply", {
+def apply_policy_to_agent_grant(cfg, policy_id):
+    backend_json(cfg, "PUT", f"/api/user/agents/{quote(cfg['agent_id'], safe='')}/grants", {
         "workspace": cfg["workspace"],
+        "policy_id": policy_id,
     })
 
 

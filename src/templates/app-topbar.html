@@ -1,0 +1,36 @@
+{{define "app-topbar"}}
+<header class="page-header topbar">
+  <div class="topbar-brand">
+    <a class="topbar-brand-link" href="{{if .AdminMode}}/admin/{{else}}/{{end}}">
+      <img class="topbar-brand-logo" src="/static/brand/sentry-proxy-logo.png" alt="{{.AppName}}">
+    </a>
+  </div>
+  <template data-aiwp-fragment="topbar-crumb:start"></template>
+  <div class="topbar-crumb">
+    {{if .AdminMode}}<span class="topbar-brand-mode">Admin</span>{{end}}
+    {{if .AdminMode}}
+      {{if eq .ActiveSection "admin"}}
+        <strong id="pageCrumbTitle">Admin</strong>
+      {{else}}
+        <span>Admin</span><span class="sep">&gt;</span><strong class="truncate">{{.PageTitle}}</strong>
+      {{end}}
+    {{else if eq .ActiveSection "workspace"}}
+      <span>Workspace</span><span class="sep">&gt;</span><strong class="truncate">{{.Workspace.Email}}</strong>
+    {{else if and (eq .ActiveSection "agents") .SelectedAgentName}}
+      <span>Agents access</span><span class="sep">&gt;</span><strong class="truncate">{{.SelectedAgentName}}</strong>
+    {{else}}
+      <strong id="pageCrumbTitle">{{.PageTitle}}</strong>
+    {{end}}
+  </div>
+  <template data-aiwp-fragment="topbar-crumb:end"></template>
+  <div class="topbar-actions">
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <button class="topbar-link topbar-link-button topbar-logout-button" type="submit">
+        <span class="topbar-link-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="M16 17l5-5-5-5"></path><path d="M21 12H9"></path></svg></span>
+        <span>Logout</span>
+      </button>
+    </form>
+  </div>
+</header>
+{{end}}

@@ -1,0 +1,71 @@
+{{define "settings-page"}}
+<div class="card">
+  <h2>Settings</h2>
+  <section class="log-settings-section">
+    <h3>Timezone</h3>
+    <p>Select the local timezone used to display timestamps in the User Interface.</p>
+    <form method="post" action="/settings/update" class="settings-form" data-track-changes="true" data-ajax-form="true" data-ajax-update="settings">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div class="settings-field">
+        <label for="timezone">Timezone</label>
+        <select id="timezone" name="timezone" required>
+          {{range .Settings.Timezones}}<option value="{{.Name}}" {{if .Selected}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+      </div>
+      <button class="btn" type="submit">Save settings</button>
+    </form>
+    <div class="form-flash-slot" aria-live="polite">{{if .SettingsError}}<div class="flash flash-error"><span>{{.SettingsError}}</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}{{if .SettingsSaved}}<div class="flash flash-success"><span>Settings saved.</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}</div>
+    <p>Currently saved timezone: <span id="savedTimezone">{{.Settings.Timezone}}</span></p>
+    <p>Current time in currently saved timezone: <span id="savedCurrentTime">{{.Settings.CurrentTime}}</span></p>
+  </section>
+  <section class="log-settings-section">
+    <h3>User Interface Session Timeout</h3>
+    <p>Choose how long your browser session stays signed in before the User Interface asks you to sign in again.</p>
+    <form method="post" action="/settings/session-timeout" class="settings-form session-timeout-form" data-track-changes="true" data-ajax-form="true" data-ajax-update="session-timeout" data-suppress-success-flash="true">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div class="settings-field session-timeout-field">
+        <label for="session_timeout_hours">Session duration (hours)</label>
+        <div class="session-timeout-inline">
+          <input id="session_timeout_hours" type="number" name="session_timeout_hours" min="1" max="8760" step="1" value="{{.Settings.SessionTimeoutHours}}" required>
+          <button class="btn" type="submit">Update session duration</button>
+        </div>
+      </div>
+    </form>
+    <div class="form-flash-slot" aria-live="polite"></div>
+    <p>Current timeout: <span id="savedSessionTimeoutHours">{{.Settings.SessionTimeoutHours}}</span> hours.</p>
+    <p>Session time left: <span id="sessionTimeLeft" data-expires-at-ms="{{.Settings.SessionExpiresAtUnixMS}}"></span></p>
+  </section>
+  <section class="log-settings-section">
+    <h3>Two-factor authentication</h3>
+    <p>Protect your browser sign-in with a six-digit code from an authenticator app such as Google Authenticator.</p>
+    <p><strong>Status:</strong> {{if .TwoFactor.Enabled}}<span style="color:#137333;font-weight:700;">Enabled</span>{{else if .TwoFactor.Pending}}<span style="font-weight:700;">Setup in progress</span>{{else}}<span style="font-weight:700;">Disabled</span>{{end}}</p>
+    <div class="form-flash-slot" aria-live="polite">{{if .TwoFactor.Error}}<div class="flash flash-error"><span>{{.TwoFactor.Error}}</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}</div>
+    {{if .TwoFactor.Pending}}
+    <p>2FA enrollment is in progress.</p>
+    {{else if .TwoFactor.Enabled}}
+    <p>Two-factor authentication is enabled for future browser logins.</p>
+    {{else}}
+    <p>2FA is currently disabled.</p>
+    {{end}}
+    <div class="inline-actions" style="margin-top:1rem;">
+      {{if .TwoFactor.CanStart}}
+      <form method="post" action="/settings/2fa/start">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="back" value="/settings">
+        <button class="btn" type="submit">Enable 2FA</button>
+      </form>
+      {{else if .TwoFactor.Pending}}
+      <a class="btn" href="/settings/2fa/enroll?back=%2Fsettings">Continue 2FA enrollment</a>
+      {{else if and .TwoFactor.OrgManaged (not .TwoFactor.Pending)}}
+      <button class="btn secondary" type="button" disabled>Managed by your organization</button>
+      {{end}}
+      {{if .TwoFactor.CanReset}}
+      <form method="post" action="/settings/2fa/reset" onsubmit="return confirm('Reset the current 2FA enrollment? You will need to scan a new QR code before 2FA can be used again.');">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <button class="btn warn" type="submit">Disable or reset 2FA enrollment</button>
+      </form>
+      {{end}}
+    </div>
+  </section>
+</div>
+{{end}}

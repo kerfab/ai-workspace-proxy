@@ -1,3 +1,8 @@
+// Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+// Proprietary software. No use, copy, modification, distribution, disclosure,
+// or reverse engineering is permitted without prior written authorization
+// from Opensense Ltd.
+
 package main
 
 import (
@@ -28,7 +33,7 @@ func (a *App) handleAddDriveFolder(w http.ResponseWriter, r *http.Request) {
 	}
 	accessToken, err := a.getValidWorkspaceAccessToken(conn)
 	if err != nil {
-		http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(workspaceAuthUIErrorMessage(err)), http.StatusFound)
 		return
 	}
 	folder, err := a.buildDriveFolderRefFromRequest(user.ID, conn.MailboxEmail, "", accessToken, r)
@@ -40,6 +45,10 @@ func (a *App) handleAddDriveFolder(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape("Reference Name already exists."), http.StatusFound)
 		return
 	}
+	if existing, _ := a.store.FindDriveFolderRefByFolderID(user.ID, conn.MailboxEmail, folder.FolderID); existing != nil {
+		http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape("This Google Drive folder is already allowed for this Workspace."), http.StatusFound)
+		return
+	}
 	if err := a.store.CreateDriveFolderRef(folder); err != nil {
 		http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
 		return
@@ -49,6 +58,10 @@ func (a *App) handleAddDriveFolder(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape("Unable to cache subfolder tree: "+err.Error()), http.StatusFound)
 		return
 	}
+	a.logDriveFolderAudit(r, user, conn.MailboxEmail, "drive_folder_added", folder.ID, folder.ReferenceName, map[string]any{
+		"folder_id":   folder.FolderID,
+		"folder_name": folder.FolderName,
+	})
 	http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail), http.StatusFound)
 }
 func (a *App) handleDriveFolderRoutes(w http.ResponseWriter, r *http.Request) {
@@ -83,9 +96,10 @@ func (a *App) handleDriveFolderRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	switch action {
 	case "update":
+		agentIDs, _ := a.store.AgentIDsForDriveFolderRef(user.ID, conn.MailboxEmail, id)
 		accessToken, err := a.getValidWorkspaceAccessToken(conn)
 		if err != nil {
-			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(workspaceAuthUIErrorMessage(err)), http.StatusFound)
 			return
 		}
 		folder, err := a.buildDriveFolderRefFromRequest(user.ID, conn.MailboxEmail, id, accessToken, r)
@@ -97,6 +111,10 @@ func (a *App) handleDriveFolderRoutes(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape("Reference Name already exists."), http.StatusFound)
 			return
 		}
+		if existing, _ := a.store.FindDriveFolderRefByFolderID(user.ID, conn.MailboxEmail, folder.FolderID); existing != nil && existing.ID != id {
+			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape("This Google Drive folder is already allowed for this Workspace."), http.StatusFound)
+			return
+		}
 		if err := a.store.UpdateDriveFolderRef(folder); err != nil {
 			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
 			return
@@ -105,21 +123,37 @@ func (a *App) handleDriveFolderRoutes(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape("Unable to refresh subfolder tree: "+err.Error()), http.StatusFound)
 			return
 		}
+		a.logDriveFolderAudit(r, user, conn.MailboxEmail, "drive_folder_updated", folder.ID, folder.ReferenceName, map[string]any{
+			"old_reference_name": current.ReferenceName,
+			"folder_id":          folder.FolderID,
+			"folder_name":        folder.FolderName,
+		})
+		_ = a.store.MarkAgentsSkillStale(user.ID, agentIDs, "Allowed Drive folder \""+current.ReferenceName+"\" changed.")
 	case "refresh":
 		accessToken, err := a.getValidWorkspaceAccessToken(conn)
 		if err != nil {
-			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
+			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(workspaceAuthUIErrorMessage(err)), http.StatusFound)
 			return
 		}
 		if err := a.refreshDriveFolderTree(user.ID, accessToken, current); err != nil {
 			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape("Unable to refresh subfolder tree: "+err.Error()), http.StatusFound)
 			return
 		}
+		a.logDriveFolderAudit(r, user, conn.MailboxEmail, "drive_folder_refreshed", current.ID, current.ReferenceName, map[string]any{
+			"folder_id":   current.FolderID,
+			"folder_name": current.FolderName,
+		})
 	case "delete":
+		agentIDs, _ := a.store.AgentIDsForDriveFolderRef(user.ID, conn.MailboxEmail, id)
 		if err := a.store.DeleteDriveFolderRef(user.ID, conn.MailboxEmail, id); err != nil {
 			http.Redirect(w, r, "/?workspace="+url.QueryEscape(conn.MailboxEmail)+"&folder_error="+url.QueryEscape(err.Error()), http.StatusFound)
 			return
 		}
+		a.logDriveFolderAudit(r, user, conn.MailboxEmail, "drive_folder_deleted", current.ID, current.ReferenceName, map[string]any{
+			"folder_id":   current.FolderID,
+			"folder_name": current.FolderName,
+		})
+		_ = a.store.MarkAgentsSkillStale(user.ID, agentIDs, "Allowed Drive folder \""+current.ReferenceName+"\" was deleted.")
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "folder action not found")
 		return
@@ -138,13 +172,6 @@ func (a *App) buildDriveFolderRefFromRequest(userID, mailboxEmail, existingID, a
 	if folderLink == "" {
 		return nil, fmt.Errorf("Folder link is required")
 	}
-	allowDocs := r.FormValue("allow_docs") != ""
-	allowSheets := r.FormValue("allow_sheets") != ""
-	allowSlides := r.FormValue("allow_slides") != ""
-	allowDrive := r.FormValue("allow_drive_files") != ""
-	if !allowDocs && !allowSheets && !allowSlides && !allowDrive {
-		allowDocs, allowSheets, allowSlides, allowDrive = true, true, true, true
-	}
 	folderID, resourceKey, err := parseDriveFolderLink(folderLink)
 	if err != nil {
 		return nil, err
@@ -160,36 +187,56 @@ func (a *App) buildDriveFolderRefFromRequest(userID, mailboxEmail, existingID, a
 	if meta.MimeType != mimeTypeFolder {
 		return nil, fmt.Errorf("The provided link does not point to a Google Drive folder")
 	}
-	return &AllowedDriveFolder{ID: existingID, UserID: userID, MailboxEmail: normalizeEmail(mailboxEmail), ReferenceName: referenceName, ReferenceKey: normalizeReferenceKey(referenceName), FolderURL: folderLink, FolderID: folderID, FolderName: meta.Name, ResourceKey: resourceKey, AllowDocs: allowDocs, AllowSheets: allowSheets, AllowSlides: allowSlides, AllowDriveFiles: allowDrive}, nil
+	return &AllowedDriveFolder{ID: existingID, UserID: userID, MailboxEmail: normalizeEmail(mailboxEmail), ReferenceName: referenceName, ReferenceKey: normalizeReferenceKey(referenceName), FolderURL: folderLink, FolderID: folderID, FolderName: meta.Name, ResourceKey: resourceKey}, nil
 }
 func (a *App) handleDriveFolderTreeAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET required")
 		return
 	}
-	user, err := a.currentUserFromProxyBearer(r)
+	auth, err := a.currentAgentFromBearer(r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "auth_error", err.Error())
 		return
 	}
-	if user == nil || user.IsSuspended {
+	if auth == nil || auth.User == nil || auth.Agent == nil || auth.User.IsSuspended {
 		writeError(w, http.StatusUnauthorized, "auth_error", "invalid or suspended user")
 		return
 	}
-	_ = a.store.TouchProxyTokenUsage(user.ID)
+	user := auth.User
+	agent := auth.Agent
+	_ = a.store.TouchAgentUsage(agent.ID)
 	conn, err := a.resolveWorkspaceFromQuery(user.ID, r)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "workspace_not_found", err.Error())
 		return
 	}
+	if grant, err := a.store.GetAgentWorkspaceGrant(user.ID, agent.ID, conn.MailboxEmail); err != nil {
+		writeError(w, http.StatusInternalServerError, "agent_grant_error", err.Error())
+		return
+	} else if grant == nil {
+		writeError(w, http.StatusForbidden, "workspace_not_allowed", "agent is not allowed to access this workspace")
+		return
+	}
 	accessToken, err := a.getValidWorkspaceAccessToken(conn)
 	if err != nil {
+		var authErr *workspaceAuthRequiredError
+		if errors.As(err, &authErr) {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error":           "workspace_reauth_required",
+				"message":         authErr.AgentMessage(),
+				"workspace":       authErr.WorkspaceEmail,
+				"reauth_url":      authErr.ReauthURL,
+				"reauth_required": true,
+			})
+			return
+		}
 		writeError(w, http.StatusBadGateway, "workspace_token_error", err.Error())
 		return
 	}
 
 	refName := r.URL.Query().Get("driveRef")
-	folders, selectedRef, err := a.resolveReferenceFolders(user.ID, conn.MailboxEmail, refName)
+	folders, selectedRef, err := a.resolveAgentReferenceFolders(user.ID, agent.ID, conn.MailboxEmail, refName)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "request_denied", err.Error())
 		return
@@ -240,29 +287,49 @@ func (a *App) handleRefreshDriveFolderTreeAPI(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
 		return
 	}
-	user, err := a.currentUserFromProxyBearer(r)
+	auth, err := a.currentAgentFromBearer(r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "auth_error", err.Error())
 		return
 	}
-	if user == nil || user.IsSuspended {
+	if auth == nil || auth.User == nil || auth.Agent == nil || auth.User.IsSuspended {
 		writeError(w, http.StatusUnauthorized, "auth_error", "invalid or suspended user")
 		return
 	}
-	_ = a.store.TouchProxyTokenUsage(user.ID)
+	user := auth.User
+	agent := auth.Agent
+	_ = a.store.TouchAgentUsage(agent.ID)
 	conn, err := a.resolveWorkspaceFromQuery(user.ID, r)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "workspace_not_found", err.Error())
 		return
 	}
+	if grant, err := a.store.GetAgentWorkspaceGrant(user.ID, agent.ID, conn.MailboxEmail); err != nil {
+		writeError(w, http.StatusInternalServerError, "agent_grant_error", err.Error())
+		return
+	} else if grant == nil {
+		writeError(w, http.StatusForbidden, "workspace_not_allowed", "agent is not allowed to access this workspace")
+		return
+	}
 	accessToken, err := a.getValidWorkspaceAccessToken(conn)
 	if err != nil {
+		var authErr *workspaceAuthRequiredError
+		if errors.As(err, &authErr) {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error":           "workspace_reauth_required",
+				"message":         authErr.AgentMessage(),
+				"workspace":       authErr.WorkspaceEmail,
+				"reauth_url":      authErr.ReauthURL,
+				"reauth_required": true,
+			})
+			return
+		}
 		writeError(w, http.StatusBadGateway, "workspace_token_error", err.Error())
 		return
 	}
 
 	refName := r.URL.Query().Get("driveRef")
-	folders, selectedRef, err := a.resolveReferenceFolders(user.ID, conn.MailboxEmail, refName)
+	folders, selectedRef, err := a.resolveAgentReferenceFolders(user.ID, agent.ID, conn.MailboxEmail, refName)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "request_denied", err.Error())
 		return
@@ -296,4 +363,12 @@ func (a *App) handleRefreshDriveFolderTreeAPI(w http.ResponseWriter, r *http.Req
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "driveFolders": refreshed})
+}
+
+func workspaceAuthUIErrorMessage(err error) string {
+	var authErr *workspaceAuthRequiredError
+	if errors.As(err, &authErr) {
+		return authErr.Message
+	}
+	return err.Error()
 }

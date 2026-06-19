@@ -1,0 +1,87 @@
+{{define "logs-page"}}
+<div class="card">
+  <h2>Logs</h2>
+  <section class="log-settings-section">
+    <h3 id="retentionTitle">Retention: {{.LoggingSettings.RetentionDays}} {{.LoggingRetentionUnit}}</h3>
+    <p>Standard accounts keep logs for 7 days before automatic cleanup.</p>
+  </section>
+</div>
+
+<div class="card">
+  <h2>Activity logs</h2>
+  <div class="log-console-toolbar">
+    <div class="log-console-field log-date-field">
+      <label for="logStart">From</label>
+      <div class="log-date-input-wrap">
+        <input id="logStart" type="text" readonly aria-haspopup="dialog" autocomplete="off">
+        <button class="log-date-button" type="button" aria-label="Choose from date" data-date-target="logStart">&#128197;</button>
+      </div>
+    </div>
+    <div class="log-console-field log-date-field">
+      <label for="logEnd">To</label>
+      <div class="log-date-input-wrap">
+        <input id="logEnd" type="text" readonly aria-haspopup="dialog" autocomplete="off">
+        <button class="log-date-button" type="button" aria-label="Choose to date" data-date-target="logEnd">&#128197;</button>
+      </div>
+    </div>
+    <div class="log-console-field">
+      <label for="logPageSize">Entries per page</label>
+      <select id="logPageSize">
+        <option value="50">50</option>
+        <option value="100">100</option>
+        <option value="150">150</option>
+        <option value="200">200</option>
+        <option value="250">250</option>
+      </select>
+    </div>
+    <div class="log-console-actions">
+      <button class="btn" id="toggleLogColumns" type="button">Columns</button>
+      <button class="btn" id="toggleLogFilters" type="button">Regex filters</button>
+      <button class="btn" id="exportCurrentJSONL" type="button">Export view JSONL</button>
+      <button class="btn" id="exportCurrentCSV" type="button">Export view CSV</button>
+      <button class="btn" id="exportAllJSONL" type="button">Export all JSONL</button>
+      <button class="btn" id="exportAllCSV" type="button">Export all CSV</button>
+    </div>
+  </div>
+  <div id="logTypeFilters" class="log-type-filters" aria-label="Log types"></div>
+  <p class="log-console-status" id="logConsoleStatus">Loading activity logs...</p>
+  <div id="logColumnPanel" class="log-console-panel" hidden>
+    <h3>Visible columns</h3>
+    <div class="log-settings-actions log-column-reset-actions">
+      <button class="btn" id="resetLogColumnSelection" type="button">Reset selection</button>
+      <button class="btn" id="resetLogColumnOrder" type="button">Reset column order</button>
+    </div>
+    <div id="logColumnOptions"></div>
+    <div class="log-settings-actions log-column-apply-actions">
+      <button class="btn" id="applyLogColumns" type="button">Apply changes</button>
+    </div>
+  </div>
+  <div id="logFilterPanel" class="log-console-panel" hidden>
+    <h3>Column regex filters</h3>
+    <div id="logRegexFilters" class="regex-filter-grid"></div>
+    <div class="log-settings-actions">
+      <button class="btn" id="applyLogFilters" type="button">Apply filters</button>
+      <button class="btn secondary" id="resetLogFilters" type="button">Reset filters</button>
+    </div>
+  </div>
+  <div class="log-table-wrap">
+    <div id="requestLogTable" data-range-start="{{.LogRangeStart}}" data-range-end="{{.LogRangeEnd}}" data-range-start-date="{{.LogRangeStartDate}}" data-range-end-date="{{.LogRangeEndDate}}"></div>
+  </div>
+  <div id="logDetailOverlay" class="log-detail-overlay" role="dialog" aria-modal="true" aria-labelledby="logDetailTitle" hidden>
+    <section class="log-detail-modal">
+      <div class="log-detail-header">
+        <h3 id="logDetailTitle">Log entry details</h3>
+        <button class="log-detail-close" id="closeLogDetailX" type="button" aria-label="Close log entry details">&times;</button>
+      </div>
+      <div class="log-detail-body">
+        <dl id="logDetailGrid" class="log-detail-grid"></dl>
+      </div>
+      <div class="log-detail-actions">
+        <button class="btn" id="copyLogDetail" type="button">Copy</button>
+        <button class="btn" id="closeLogDetail" type="button">Close</button>
+      </div>
+    </section>
+  </div>
+  <div id="logRowContextMenu" class="log-context-menu" hidden></div>
+</div>
+{{end}}

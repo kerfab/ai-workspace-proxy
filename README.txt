@@ -24,16 +24,16 @@ AI Workspace Proxy is a single-binary Go HTTP service that:
 - only admits users whose Google email belongs to one of the configured allowed domains
 - lets each user connect one or more Google Workspace accounts via OAuth
 - stores Google Workspace tokens server-side only
-- issues separate agent Workspace and end-user backend API keys to each user
+- issues one end-user backend API key per user and one API key per agent identity
 - exposes relay endpoints for selected Google Workspace APIs
 - enforces a server-side whitelist before forwarding requests to Google APIs
 - stores operational state in SQLite and files only
 
-The proxy may be granted advanced access to Google Workspace services, but it does not expose that full power directly to AI agents. Instead, it strictly inspects incoming HTTP requests and only relays operations that are explicitly permitted by the user's selected proxy policy. Policies are managed in the dashboard Policy Editor as friendly capabilities, and the proxy translates those capabilities into concrete Google API allow rules.
+The proxy may be granted advanced access to Google Workspace services, but it does not expose that full power directly to AI agents. Instead, it strictly inspects incoming HTTP requests and only relays operations that are explicitly permitted by the user's selected proxy policy. Policies are managed in the dashboard Permissions editor as friendly capabilities, and the proxy translates those capabilities into concrete Google API allow rules.
 
 Supported Google Workspace services/actions supported in this build
 -------------------------------------------------------------------
-The built-in system default policy allows all Low-risk capabilities. Users can create custom policies in the Policy Editor to enable additional capabilities.
+The built-in system default policy allows all Low-risk capabilities. Users can create custom policies in the Permissions editor to enable additional capabilities.
 
 Gmail
 - list emails
@@ -46,6 +46,9 @@ Gmail
 - list labels
 - read a label
 - custom policies may additionally allow draft writing, draft deletion, sending, custom label changes, archiving, email status changes, Spam/Trash moves, label creation/renaming/deletion, permanent email deletion, imports, and notification watches
+
+Contacts
+- search contacts and directory entries to resolve people from partial names or email hints
 
 Google Calendar
 - list the user calendar list
@@ -146,7 +149,6 @@ Other optional:
 - `APP_BIND_ADDR`               default `:8080`
 - `APP_NAME`                    default `AI Workspace Proxy`
 - `DB_PATH`                     default `./db/ai_workspace_proxy.sqlite3`
-- `DENIED_LOG_PATH`             default `./logs/denied.log`
 - `SESSION_COOKIE_NAME`         default `ai_workspace_proxy_session`
 - `COOKIE_SECURE`               default `false`
 - `HTTP_CLIENT_TIMEOUT_SEC`     default `30`
@@ -158,9 +160,9 @@ Allowed Drive folders
 Users can configure allowed Google Drive folders from the dashboard under each connected Workspace account. Each folder has:
 - a unique Reference Name
 - an extracted internal folder ID
-- allowed file types (Docs, Sheets, Slides, generic Drive files)
+- a cached subfolder tree rooted at that approved folder
 
-The proxy resolves that Reference Name inside the selected Workspace account and enforces folder-level restrictions server-side. Registered folders include their cached subfolders.
+Registering a folder does not automatically grant it to every agent. The folder must also be allowed inside the relevant agent Workspace grant. The proxy resolves each Reference Name inside the selected Workspace account and enforces folder-level restrictions server-side.
 
 When a folder is added or updated, the proxy recursively caches the subfolder tree in SQLite. Users can refresh that cached tree from the dashboard if folders are added, moved, or renamed in Google Drive.
 
@@ -178,19 +180,20 @@ Agents can refresh cached folder trees on behalf of the user through:
 
 Downloaded agent config
 -----------------------
-The dashboard section "Proxy API Configurations" offers two different config files.
+The dashboard offers two different config files.
 
-`agents-workspace-api-access.config.json` is for AI agents and generated skills. It contains the standard Workspace API key plus connected Workspaces sorted alphabetically by email:
+`agents-workspace-api-access.config.json` is for AI agents and generated skills. It contains the selected agent API key plus the Workspaces granted to that agent, sorted alphabetically by email:
 
 ```json
 {
-  "config_type": "agents_workspace_api_access",
   "proxy_url": "http://localhost:8080",
-  "proxy_token": "ptk_...",
+  "agent_api_token": "atk_...",
   "workspaces": [
     {
       "email": "person@example.com",
-      "name": "work"
+      "name": "work",
+      "policy_id": "system",
+      "policy_name": "Default system policy"
     }
   ]
 }
@@ -210,7 +213,7 @@ If the JSON contains exactly one Workspace, an agent may auto-use that Workspace
 
 Privileged policy API
 ---------------------
-The privileged policy API uses `Authorization: Bearer <user_backend_api_token>` from `user-backend-api-access.config.json`. Standard agent Workspace API keys are rejected.
+The privileged policy API uses `Authorization: Bearer <user_backend_api_token>` from `user-backend-api-access.config.json`. Agent API keys are rejected.
 
 Endpoints:
 
@@ -264,7 +267,7 @@ Package download endpoint:
 
 - `GET /api/agent-skill/download?token=<single-use-token>`
 
-The package download endpoint accepts a single-use install token for local installation. It also accepts the user's standard agent Workspace API key as `Authorization: Bearer <token>` for the installed skill's own update command when `platform=generic` or `platform=openclaw` is supplied.
+The package download endpoint accepts a single-use install token for local installation. It also accepts the selected agent's API key as `Authorization: Bearer <token>` for the installed skill's own update command when `platform=generic` or `platform=openclaw` is supplied.
 
 The zip contains:
 - `SKILL.md`, a compact entrypoint explaining which service file the agent should read
@@ -272,7 +275,7 @@ The zip contains:
 - `scripts/install_skill.sh`, the platform-specific local installer selected for the downloaded target
 - `scripts/bootstrap_skill.sh`, the setup script that rewrites skill path markers
 - `scripts/update_skill.sh`, the shell updater used to refresh the local skill package
-- `config/agents-workspace-api-access.config.json`, filled with the proxy URL, standard Workspace API key, selected skill platform, and connected Workspaces
+- `config/agents-workspace-api-access.config.json`, filled with the proxy URL, the selected agent API key, and the Workspaces granted to that agent
 - `skills/<workspace-email>/GMAIL.md`, policy-filtered Gmail operation instructions
 - `skills/<workspace-email>/DRIVE.md`, an index pointing to Drive product-specific operation files
 - `skills/<workspace-email>/drive/FILES.md`
@@ -297,14 +300,19 @@ Known limitations and deployment recommendations
 - Cloudflare Tunnel is a strong option when you want to avoid opening inbound ports or exposing a public IP address for the origin.
 - The proxy itself supports Google Sign-In for application login. It does not natively authenticate users directly against third-party identity providers such as Okta.
 - If your company uses another IdP such as Okta, you can still place the proxy behind an external access-control layer (for example Cloudflare Access) that authenticates users with that IdP before they ever reach the proxy.
-- The dashboard Policy Editor is the current source of user policy configuration. The built-in system default policy remains available and cannot be deleted.
+- The dashboard Permissions editor is the current source of user policy configuration. The built-in system default policy remains available and cannot be deleted.
 - This is an internal proxy and still deserves a security review before production use.
 
 Operational notes
 -----------------
 - SQLite runs in WAL mode.
 - Login OAuth state is stored safely even before a user record exists.
-- Denied requests are logged to a rotating file set capped at 5 files total.
+- Per-user request logs and audit logs are stored in SQLite and exposed through the Activity logs console.
+- The Logs page uses locally vendored Tabulator assets under `src/static/vendor/tabulator`; it does not rely on a CDN at runtime.
+- Request logs include request ID, timestamp, Workspace email, target object fields, client network metadata, user agent, outcome, HTTP/upstream status, policy capability/rule for successful requests, and error message for failed requests. Request and response bodies are not logged.
+- Agent name and location come from the configured agent identity. When a given agent Workspace grant enforces accountability, proxy relay requests for that grant must include `X-AIWP-Agent-Motive`.
+- Request logs are retained for 7 days for standard users, and cleanup runs at startup and every 30 minutes.
+- The older denied-request file log remains available as a local safety/debug log for blocked relay requests and is capped at 5 files total.
 - Gmail relay requests require `workspace=<friendly_name_or_email>`, only accept `/users/me/...` or `/users/<selected_workspace_email>/...`, and normalize outbound Gmail requests to `/users/me/`.
 - Calendar, Drive, Docs, Sheets, and Slides relays are all limited by the selected proxy policy.
 - Drive folder access is enforced against registered folder trees cached in SQLite for the selected Workspace account.

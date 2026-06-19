@@ -1,0 +1,24 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>{{.AppName}}</title>
+<link rel="icon" href="/static/brand/favicon.ico" sizes="any">
+<link rel="stylesheet" href="/static/auth.css">
+</head><body>
+<h1>{{.AppName}}</h1>
+<div class="card">
+  <h2>Two-factor authentication</h2>
+  <p>Enter the six-digit code from your authenticator app to finish signing in as <strong>{{.User.Email}}</strong>.</p>
+  {{if .ErrorMessage}}<div class="flash flash-error"><span>{{.ErrorMessage}}</span></div>{{end}}
+  <form method="post" action="/auth/2fa">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <label for="twoFactorCode">Authentication code</label>
+    <input id="twoFactorCode" type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+    <div class="inline-actions" style="margin-top:1rem;">
+      <button class="btn" type="submit">Verify code</button>
+    </div>
+  </form>
+  <form method="post" action="/logout" style="margin-top:1rem;">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <button class="btn secondary" type="submit">Cancel sign-in</button>
+  </form>
+</div>
+</body></html>

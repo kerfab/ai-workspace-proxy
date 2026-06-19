@@ -1,7 +1,13 @@
+// Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+// Proprietary software. No use, copy, modification, distribution, disclosure,
+// or reverse engineering is permitted without prior written authorization
+// from Opensense Ltd.
+
 package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,79 +20,188 @@ type relayTarget struct {
 	normalizedPath string
 }
 
-func (a *App) policyEngineForWorkspace(userID, mailboxEmail string) (*PolicyEngine, string, error) {
-	capabilities, policyID, err := a.store.WorkspacePolicyCapabilities(userID, mailboxEmail)
+func (a *App) policyEngineForPolicy(userID, policyID string) (*PolicyEngine, string, error) {
+	policyID = strings.TrimSpace(policyID)
+	if policyID == "" || policyID == systemPolicyID {
+		engine, err := NewPolicyEngineWithReview(SystemDefaultCapabilityKeys(), nil)
+		return engine, systemPolicyID, err
+	}
+	policy, err := a.store.GetUserPolicy(userID, policyID)
 	if err != nil {
 		return nil, "", err
 	}
-	engine, err := NewPolicyEngine(capabilities)
+	if policy == nil {
+		return nil, "", fmt.Errorf("policy not found")
+	}
+	engine, err := NewPolicyEngineWithReview(policy.EnabledCapabilities, policy.ReviewRequiredCapabilities)
 	if err != nil {
 		return nil, "", err
 	}
 	return engine, policyID, nil
 }
+
 func (a *App) handleProxyRelay(w http.ResponseWriter, r *http.Request) {
-	proxyToken := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	if proxyToken == "" {
-		writeError(w, http.StatusUnauthorized, "auth_required", "missing Bearer token")
-		return
-	}
-	user, err := a.store.FindUserByProxyToken(a.crypto, proxyToken)
+	requestID := newRequestID()
+	w.Header().Set("X-AIWP-Request-ID", requestID)
+	auth, err := a.currentAgentFromBearer(r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "auth_error", err.Error())
 		return
 	}
+	if auth == nil {
+		writeError(w, http.StatusUnauthorized, "auth_required", "missing Bearer token")
+		return
+	}
+	user := auth.User
+	agent := auth.Agent
 	if user == nil || user.IsSuspended {
 		writeError(w, http.StatusUnauthorized, "auth_error", "invalid or suspended user")
 		return
 	}
-	_ = a.store.TouchProxyTokenUsage(user.ID)
+	_ = a.store.TouchAgentUsage(agent.ID)
+
+	agentCtx, err := agentContextForAgentRequest(r, agent, false)
+	logEntry := a.baseRequestLogEntry(r, requestID, user, agent.ID, agentCtx)
+	logEntry.Service = inferServiceLabelFromPath(r.URL.Path)
+	if err != nil {
+		_ = a.store.IncrementDailyStat(user.ID, false)
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusForbidden
+		logEntry.ErrorMessage = err.Error()
+		a.saveRequestLog(logEntry)
+		writeError(w, http.StatusForbidden, "agent_context_required", err.Error())
+		return
+	}
+	if a.denyIfAgentFirewallBlocks(w, r, requestID, user, agent, logEntry.Service) {
+		return
+	}
 
 	conn, err := a.resolveWorkspaceFromQuery(user.ID, r)
 	if err != nil {
+		_ = a.store.IncrementDailyStat(user.ID, false)
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusForbidden
+		logEntry.ErrorMessage = err.Error()
+		a.saveRequestLog(logEntry)
 		writeError(w, http.StatusForbidden, "workspace_not_found", err.Error())
 		return
+	}
+	logEntry.WorkspaceEmail = conn.MailboxEmail
+	grant, err := a.store.GetAgentWorkspaceGrant(user.ID, agent.ID, conn.MailboxEmail)
+	if err != nil {
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusInternalServerError
+		logEntry.ErrorMessage = err.Error()
+		a.saveRequestLog(logEntry)
+		writeError(w, http.StatusInternalServerError, "agent_grant_error", err.Error())
+		return
+	}
+	if grant == nil {
+		_ = a.store.IncrementDailyStat(user.ID, false)
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusForbidden
+		logEntry.ErrorMessage = "agent is not allowed to access this workspace"
+		a.saveRequestLog(logEntry)
+		writeError(w, http.StatusForbidden, "workspace_not_allowed", "agent is not allowed to access this workspace")
+		return
+	}
+	if grant.RequireAgentMotive {
+		agentCtx, err = agentContextForAgentRequest(r, agent, true)
+		logEntry.AgentMotive = agentCtx.Motive
+		if err != nil {
+			_ = a.store.IncrementDailyStat(user.ID, false)
+			logEntry.Outcome = "Fail"
+			logEntry.HTTPStatus = http.StatusForbidden
+			logEntry.ErrorMessage = err.Error()
+			a.saveRequestLog(logEntry)
+			writeError(w, http.StatusForbidden, "agent_context_required", err.Error())
+			return
+		}
 	}
 
 	target, err := normalizeProxyTarget(r.URL.EscapedPath(), conn.MailboxEmail)
 	if err != nil {
 		_ = a.store.IncrementDailyStat(user.ID, false)
-		a.logDeniedRequest(r, user, conn.MailboxEmail, nil, err.Error())
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusForbidden
+		logEntry.ErrorMessage = err.Error()
+		a.saveRequestLog(logEntry)
 		writeError(w, http.StatusForbidden, "request_denied", err.Error())
 		return
 	}
+	logEntry.Service = target.serviceLabel
+	logEntry.Path = target.normalizedPath
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, a.cfg.MaxRequestBodyBytes+1))
 	if err != nil {
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusBadRequest
+		logEntry.ErrorMessage = err.Error()
+		a.saveRequestLog(logEntry)
 		writeError(w, http.StatusBadRequest, "body_error", err.Error())
 		return
 	}
 	if int64(len(body)) > a.cfg.MaxRequestBodyBytes {
+		_ = a.store.IncrementDailyStat(user.ID, false)
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusRequestEntityTooLarge
+		logEntry.ErrorMessage = "request body too large"
+		a.saveRequestLog(logEntry)
 		writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body too large")
 		return
 	}
 
 	accessToken, err := a.getValidWorkspaceAccessToken(conn)
 	if err != nil {
+		var authErr *workspaceAuthRequiredError
+		if errors.As(err, &authErr) {
+			logEntry.Outcome = "Fail"
+			logEntry.HTTPStatus = http.StatusForbidden
+			logEntry.ErrorMessage = authErr.Message
+			a.saveRequestLog(logEntry)
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error":           "workspace_reauth_required",
+				"message":         authErr.AgentMessage(),
+				"workspace":       authErr.WorkspaceEmail,
+				"reauth_url":      authErr.ReauthURL,
+				"request_id":      requestID,
+				"reauth_required": true,
+			})
+			return
+		}
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusBadGateway
+		logEntry.ErrorMessage = err.Error()
+		a.saveRequestLog(logEntry)
 		writeError(w, http.StatusBadGateway, "workspace_token_error", err.Error())
 		return
 	}
 
 	query := r.URL.Query()
 	query.Del("workspace")
-	body, rawQuery, postMoveFolderID, err := a.rewriteWorkspaceRequest(user.ID, conn.MailboxEmail, accessToken, r.Method, target, body, query)
+	body, rawQuery, postMoveFolderID, err := a.rewriteWorkspaceRequest(user.ID, agent.ID, conn.MailboxEmail, accessToken, r.Method, target, body, query)
 	if err != nil {
 		_ = a.store.IncrementDailyStat(user.ID, false)
-		a.logDeniedRequest(r, user, conn.MailboxEmail, body, err.Error())
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusForbidden
+		logEntry.ErrorMessage = err.Error()
+		a.saveRequestLog(logEntry)
 		writeError(w, http.StatusForbidden, "request_denied", err.Error())
 		return
 	}
 
-	policyEngine, policyID, err := a.policyEngineForWorkspace(user.ID, conn.MailboxEmail)
+	policyEngine, policyID, err := a.policyEngineForPolicy(user.ID, grant.PolicyID)
 	if err != nil {
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusInternalServerError
+		logEntry.PolicyID = policyID
+		logEntry.ErrorMessage = err.Error()
+		a.saveRequestLog(logEntry)
 		writeError(w, http.StatusInternalServerError, "policy_error", err.Error())
 		return
 	}
+	logEntry.PolicyID = policyID
+	logEntry.PolicyName = a.policyDisplayNameForUser(user.ID, policyID)
 	evalCtx := PolicyEvalContext{
 		MailboxEmail: conn.MailboxEmail,
 		FetchCalendarEvent: func(calendarID, eventID string) (map[string]any, error) {
@@ -103,17 +218,43 @@ func (a *App) handleProxyRelay(w http.ResponseWriter, r *http.Request) {
 			return drivePolicyKindFromMime(meta.MimeType), nil
 		},
 	}
-	allowed, reason, err := policyEngine.Evaluate(r.Method, target.normalizedPath, body, evalCtx)
+	decision, err := policyEngine.EvaluateDecision(r.Method, target.normalizedPath, body, evalCtx)
 	if err != nil {
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusInternalServerError
+		logEntry.ErrorMessage = err.Error()
+		a.saveRequestLog(logEntry)
 		writeError(w, http.StatusInternalServerError, "policy_error", err.Error())
 		return
 	}
-	if !allowed {
+	if !decision.Allowed {
 		_ = a.store.IncrementDailyStat(user.ID, false)
-		a.logDeniedRequest(r, user, conn.MailboxEmail, body, "policy "+policyID+": "+reason)
-		writeError(w, http.StatusForbidden, "request_denied", reason)
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusForbidden
+		logEntry.ErrorMessage = decision.Reason
+		a.saveRequestLog(logEntry)
+		writeError(w, http.StatusForbidden, "request_denied", decision.Reason)
 		return
 	}
+	if decision.RequiresHumanApproval {
+		humanApproval, err := validateHumanApprovalHeader(r)
+		if err != nil {
+			_ = a.store.IncrementDailyStat(user.ID, false)
+			logEntry.Outcome = "Fail"
+			logEntry.HTTPStatus = http.StatusForbidden
+			logEntry.PolicyCapabilityKey = decision.CapabilityKey
+			logEntry.PolicyCapabilityTitle = decision.CapabilityTitle
+			logEntry.PolicyRuleName = decision.RuleName
+			logEntry.ErrorMessage = err.Error()
+			a.saveRequestLog(logEntry)
+			writeError(w, http.StatusForbidden, "human_approval_required", err.Error())
+			return
+		}
+		logEntry.HumanApproval = humanApproval
+	}
+	logEntry.PolicyCapabilityKey = decision.CapabilityKey
+	logEntry.PolicyCapabilityTitle = decision.CapabilityTitle
+	logEntry.PolicyRuleName = decision.RuleName
 
 	upstreamURL := target.upstreamBase + target.normalizedPath
 	if rawQuery != "" {
@@ -121,6 +262,10 @@ func (a *App) handleProxyRelay(w http.ResponseWriter, r *http.Request) {
 	}
 	upstreamReq, err := http.NewRequest(r.Method, upstreamURL, bytes.NewReader(body))
 	if err != nil {
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusInternalServerError
+		logEntry.ErrorMessage = err.Error()
+		a.saveRequestLog(logEntry)
 		writeError(w, http.StatusInternalServerError, "upstream_error", err.Error())
 		return
 	}
@@ -129,14 +274,67 @@ func (a *App) handleProxyRelay(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.client.Do(upstreamReq)
 	if err != nil {
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusBadGateway
+		logEntry.ErrorMessage = err.Error()
+		a.saveRequestLog(logEntry)
 		writeError(w, http.StatusBadGateway, "upstream_error", err.Error())
 		return
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
+	if shouldRetryWorkspaceAuth(resp.StatusCode, respBody) {
+		if refreshedToken, refreshErr := a.refreshWorkspaceAccessToken(conn); refreshErr == nil {
+			_ = resp.Body.Close()
+			retryReq, retryErr := http.NewRequest(r.Method, upstreamURL, bytes.NewReader(body))
+			if retryErr != nil {
+				logEntry.Outcome = "Fail"
+				logEntry.HTTPStatus = http.StatusInternalServerError
+				logEntry.ErrorMessage = retryErr.Error()
+				a.saveRequestLog(logEntry)
+				writeError(w, http.StatusInternalServerError, "upstream_error", retryErr.Error())
+				return
+			}
+			copyWhitelistedRequestHeaders(retryReq.Header, r.Header)
+			retryReq.Header.Set("Authorization", "Bearer "+refreshedToken)
+			resp, err = a.client.Do(retryReq)
+			if err != nil {
+				logEntry.Outcome = "Fail"
+				logEntry.HTTPStatus = http.StatusBadGateway
+				logEntry.ErrorMessage = err.Error()
+				a.saveRequestLog(logEntry)
+				writeError(w, http.StatusBadGateway, "upstream_error", err.Error())
+				return
+			}
+			defer resp.Body.Close()
+			respBody, _ = io.ReadAll(resp.Body)
+		} else if refreshErr != nil {
+			var authErr *workspaceAuthRequiredError
+			if errors.As(refreshErr, &authErr) {
+				logEntry.Outcome = "Fail"
+				logEntry.HTTPStatus = http.StatusForbidden
+				logEntry.ErrorMessage = authErr.Message
+				a.saveRequestLog(logEntry)
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error":           "workspace_reauth_required",
+					"message":         authErr.AgentMessage(),
+					"workspace":       authErr.WorkspaceEmail,
+					"reauth_url":      authErr.ReauthURL,
+					"request_id":      requestID,
+					"reauth_required": true,
+				})
+				return
+			}
+		}
+	}
 
 	if postMoveFolderID != "" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		if err := a.postCreateMoveToFolder(accessToken, target.serviceLabel, respBody, postMoveFolderID); err != nil {
+			logEntry.Outcome = "Fail"
+			logEntry.HTTPStatus = http.StatusBadGateway
+			logEntry.UpstreamStatus = resp.StatusCode
+			logEntry.ErrorMessage = err.Error()
+			a.saveRequestLog(logEntry)
 			writeError(w, http.StatusBadGateway, "workspace_move_error", err.Error())
 			return
 		}
@@ -145,7 +343,28 @@ func (a *App) handleProxyRelay(w http.ResponseWriter, r *http.Request) {
 	copyResponseHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(respBody)
-	_ = a.store.IncrementDailyStat(user.ID, true)
+	allowed := resp.StatusCode >= 200 && resp.StatusCode < 400
+	_ = a.store.IncrementDailyStat(user.ID, allowed)
+	logEntry.HTTPStatus = resp.StatusCode
+	logEntry.UpstreamStatus = resp.StatusCode
+	if allowed {
+		logEntry.Outcome = "Success"
+	} else {
+		logEntry.Outcome = "Fail"
+		logEntry.ErrorMessage = fmt.Sprintf("upstream Google returned %d", resp.StatusCode)
+	}
+	a.saveRequestLog(logEntry)
+}
+
+func shouldRetryWorkspaceAuth(statusCode int, body []byte) bool {
+	if statusCode == http.StatusUnauthorized {
+		return true
+	}
+	if statusCode != http.StatusForbidden {
+		return false
+	}
+	lower := strings.ToLower(string(body))
+	return strings.Contains(lower, "invalid credentials") || strings.Contains(lower, "autherror")
 }
 func normalizeProxyTarget(rawPath, accountEmail string) (relayTarget, error) {
 	switch {
@@ -242,38 +461,4 @@ func copyResponseHeaders(dst, src http.Header) {
 			dst.Add(key, value)
 		}
 	}
-}
-func (a *App) logDeniedRequest(r *http.Request, user *User, mailbox string, body []byte, reason string) {
-	headers := map[string]string{}
-	for key, values := range r.Header {
-		if strings.EqualFold(key, "Authorization") || strings.EqualFold(key, "Cookie") {
-			continue
-		}
-		headers[key] = strings.Join(values, ",")
-	}
-	_ = a.deniedLog.Log(DeniedLogEntry{
-		UserID:     user.ID,
-		Mailbox:    mailbox,
-		Method:     r.Method,
-		Path:       r.URL.Path,
-		Query:      r.URL.RawQuery,
-		Headers:    headers,
-		Body:       sanitizeBody(body),
-		Reason:     reason,
-		RemoteAddr: r.RemoteAddr,
-	})
-}
-func sanitizeBody(body []byte) string {
-	if len(body) == 0 {
-		return ""
-	}
-	text := string(body)
-	lower := strings.ToLower(text)
-	if strings.Contains(lower, `"raw"`) {
-		return `{"redacted":"gmail raw MIME content omitted"}`
-	}
-	if len(text) > 4096 {
-		return text[:4096] + "...[truncated]"
-	}
-	return text
 }

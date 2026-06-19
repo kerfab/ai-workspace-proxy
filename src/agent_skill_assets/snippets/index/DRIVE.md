@@ -2,7 +2,7 @@
 
 Read only the file that matches the user's task:
 
-- `{baseDir}/skills/{{WORKSPACE_EMAIL}}/drive/FILES.md`: Drive metadata and non-Google-native file operations - search metadata, read/download non-Google files, create/edit/delete non-Google files, share, comment, label, and inspect revisions.
+- `{baseDir}/skills/{{WORKSPACE_EMAIL}}/drive/FILES.md`: Drive metadata and Other file types operations - search metadata, read/download other file types, create/edit/delete other file types, share, comment, label, and inspect revisions.
 - `{baseDir}/skills/{{WORKSPACE_EMAIL}}/drive/DOCS.md`: Google Docs operations - read, export, create, edit, and delete Google Docs.
 - `{baseDir}/skills/{{WORKSPACE_EMAIL}}/drive/SHEETS.md`: Google Sheets operations - read, export, create, edit, and delete Google Sheets.
 - `{baseDir}/skills/{{WORKSPACE_EMAIL}}/drive/SLIDES.md`: Google Slides operations - read, export, create, edit, and delete Google Slides.

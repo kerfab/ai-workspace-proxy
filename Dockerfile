@@ -27,17 +27,16 @@ COPY --from=build /out/ai-workspace-proxy /app/ai-workspace-proxy
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 
 RUN chmod +x /app/docker-entrypoint.sh \
-    && mkdir -p /data/db /data/logs
+    && mkdir -p /data/db
 
 ENV APP_NAME="AI Workspace Proxy" \
     APP_BIND_ADDR=":80" \
     DB_PATH="/data/db/ai_workspace_proxy.sqlite3" \
-    DENIED_LOG_PATH="/data/logs/denied.log" \
     COOKIE_SECURE="true"
 
 EXPOSE 80
 
-VOLUME ["/data/db", "/data/logs"]
+VOLUME ["/data/db"]
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["/app/ai-workspace-proxy"]

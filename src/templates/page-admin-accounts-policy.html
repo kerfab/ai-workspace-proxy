@@ -1,0 +1,177 @@
+{{define "admin-accounts-policy-page"}}
+{{$policy := .AdminAccountsPolicy.Policy}}
+<form method="post" action="/admin/accounts-policy" class="admin-policy-form card" data-track-changes="true">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <h2>Accounts Policy</h2>
+  <p>Define organization-wide account defaults and enforcement rules for users under <strong>{{.OrganizationAdmin.Domain}}</strong>. These settings apply to all users in the organization, including administrators.</p>
+  {{if .AdminAccountsPolicy.Error}}<div class="flash flash-error"><span>{{.AdminAccountsPolicy.Error}}</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}
+  {{if .AdminAccountsPolicy.Saved}}<div class="flash flash-success"><span>Accounts policy saved.</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}
+
+  <div class="admin-policy-grid">
+    <section class="admin-policy-card">
+      <div class="admin-policy-card-head">
+        <div>
+          <h3>Enforce session timeout</h3>
+          <p>Fix the User Interface session duration for every organization user.</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" name="enforce_session_timeout" value="1" {{if $policy.EnforceSessionTimeout}}checked{{end}}>
+          <span></span>
+        </label>
+      </div>
+      <label class="admin-policy-field">
+        <span>Session duration (hours)</span>
+        <input type="number" name="session_timeout_hours" min="1" max="8760" value="{{$policy.SessionTimeoutHours}}">
+      </label>
+    </section>
+
+    <section class="admin-policy-card">
+      <div class="admin-policy-card-head">
+        <div>
+          <h3>Enforce 2FA for all users</h3>
+          <p>Require two-factor authentication on sign-in. Users who are not enrolled must enroll before continuing in the UI. AI agent operations are not disrupted by this setting.</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" name="require_two_factor" value="1" {{if $policy.RequireTwoFactor}}checked{{end}}>
+          <span></span>
+        </label>
+      </div>
+    </section>
+
+    <section class="admin-policy-card">
+      <div class="admin-policy-card-head">
+        <div>
+          <h3>Allow custom policies</h3>
+          <p>Allow users to create and edit their own access policies, with a maximum permission risk level.</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" name="allow_custom_policies" value="1" {{if $policy.AllowCustomPolicies}}checked{{end}}>
+          <span></span>
+        </label>
+      </div>
+      <label class="admin-policy-field">
+        <span>Maximum allowed permission risk</span>
+        <select name="custom_policy_max_risk">
+          {{range .AdminAccountsPolicy.RiskOptions}}<option value="{{.Value}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>{{end}}
+        </select>
+      </label>
+    </section>
+
+    <section class="admin-policy-card">
+      <div class="admin-policy-card-head">
+        <div>
+          <h3>Allow non-admin invites</h3>
+          <p>Allow non-admin users to invite other users whose email addresses end with <strong>@{{.OrganizationAdmin.Domain}}</strong>.</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" name="allow_non_admin_invites" value="1" {{if $policy.AllowNonAdminInvites}}checked{{end}}>
+          <span></span>
+        </label>
+      </div>
+    </section>
+
+    <section class="admin-policy-card">
+      <div class="admin-policy-card-head">
+        <div>
+          <h3>Allow other Workspace domains</h3>
+          <p>Allow users to connect Workspace accounts from approved domains beyond the organization domain.</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" name="allow_external_workspace_domains" value="1" {{if $policy.AllowExternalWorkspaceDomains}}checked{{end}}>
+          <span></span>
+        </label>
+      </div>
+      <label class="admin-policy-field">
+        <span>Approved domains</span>
+        <textarea name="approved_workspace_domains" rows="4" placeholder="example.com&#10;subsidiary.example">{{.AdminAccountsPolicy.ApprovedDomainsText}}</textarea>
+      </label>
+    </section>
+
+    <section class="admin-policy-card">
+      <div class="admin-policy-card-head">
+        <div>
+          <h3>Allow external users to connect this domain's Workspaces</h3>
+          <p>Allow users whose sign-in email is outside <strong>@{{.OrganizationAdmin.Domain}}</strong> to connect Google Workspace accounts under this domain when their email address or domain is listed below.</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" name="allow_external_users_connect_org_workspaces" value="1" {{if $policy.AllowExternalUsersConnectOrgWorkspaces}}checked{{end}}>
+          <span></span>
+        </label>
+      </div>
+      <label class="admin-policy-field">
+        <span>Allowed external users or domains</span>
+        <textarea name="allowed_external_workspace_connectors" rows="4" placeholder="partner@example.com&#10;trusted-partner.example">{{.AdminAccountsPolicy.ExternalConnectorsText}}</textarea>
+      </label>
+    </section>
+
+    <section class="admin-policy-card">
+      <div class="admin-policy-card-head">
+        <div>
+          <h3>Blacklist access to specific Workspaces</h3>
+          <p>Block the listed Workspace email addresses from being connected to the proxy by anyone.</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" name="blacklist_workspace_access" value="1" {{if $policy.BlacklistWorkspaceAccess}}checked{{end}}>
+          <span></span>
+        </label>
+      </div>
+      <label class="admin-policy-field">
+        <span>Blocked Workspace email addresses</span>
+        <textarea name="blocked_workspace_emails" rows="4" placeholder="restricted@{{.OrganizationAdmin.Domain}}">{{.AdminAccountsPolicy.BlockedWorkspaceEmailsText}}</textarea>
+      </label>
+    </section>
+
+    <section class="admin-policy-card">
+      <div class="admin-policy-card-head">
+        <div>
+          <h3>Deny connection to all Workspaces, except</h3>
+          <p>Deny every Workspace connection under this domain except the exact Workspace email addresses listed below. This cannot be enabled together with Workspace blacklisting.</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" name="deny_all_workspace_connections_except" value="1" {{if $policy.DenyAllWorkspaceConnectionsExcept}}checked{{end}}>
+          <span></span>
+        </label>
+      </div>
+      <label class="admin-policy-field">
+        <span>Allowed Workspace email addresses</span>
+        <textarea name="allowed_workspace_emails" rows="4" placeholder="approved@{{.OrganizationAdmin.Domain}}">{{.AdminAccountsPolicy.AllowedWorkspaceEmailsText}}</textarea>
+      </label>
+    </section>
+
+    <section class="admin-policy-card">
+      <div class="admin-policy-card-head">
+        <div>
+          <h3>Enforce Firewall for everyone</h3>
+          <p>Require all AI agent requests for all users to come from the IPv4 or IPv6 addresses listed below. The proxy uses the direct connection IP address and ignores HTTP forwarding headers.</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" name="enforce_firewall" value="1" {{if $policy.EnforceFirewall}}checked{{end}}>
+          <span></span>
+        </label>
+      </div>
+      <label class="admin-policy-field">
+        <span>Allowed IP addresses or CIDR ranges</span>
+        <textarea name="firewall_addresses" rows="4" placeholder="203.0.113.10&#10;2001:db8::/48">{{.AdminAccountsPolicy.FirewallRulesText}}</textarea>
+      </label>
+      <p class="admin-policy-note">{{.AdminAccountsPolicy.FirewallRuleCount}} firewall {{if eq .AdminAccountsPolicy.FirewallRuleCount 1}}address{{else}}addresses{{end}} configured.</p>
+    </section>
+
+    <section class="admin-policy-card">
+      <div class="admin-policy-card-head">
+        <div>
+          <h3>Allow users to reset their 2FA</h3>
+          <p>Let users disable or reset their own two-factor authentication enrollment. When this is off, an administrator must reset 2FA when needed.</p>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" name="allow_user_two_factor_reset" value="1" {{if $policy.AllowUserTwoFactorReset}}checked{{end}}>
+          <span></span>
+        </label>
+      </div>
+    </section>
+  </div>
+
+  <div class="form-actions">
+    <button class="btn" type="submit">Save accounts policy</button>
+  </div>
+</form>
+{{end}}

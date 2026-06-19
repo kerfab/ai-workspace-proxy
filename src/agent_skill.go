@@ -1,3 +1,8 @@
+// Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+// Proprietary software. No use, copy, modification, distribution, disclosure,
+// or reverse engineering is permitted without prior written authorization
+// from Opensense Ltd.
+
 package main
 
 import (
@@ -33,11 +38,21 @@ var (
 )
 
 type agentSkillWorkspace struct {
-	Email        string
-	Name         string
-	PolicyID     string
-	PolicyName   string
-	Capabilities []string
+	Email               string
+	Name                string
+	PolicyID            string
+	PolicyName          string
+	RequireAgentMotive  bool
+	AllowedDriveFolders []agentSkillDriveFolder
+	Capabilities        []string
+	ReviewRequired      []string
+}
+
+type agentSkillDriveFolder struct {
+	ReferenceName string
+	FolderName    string
+	FolderID      string
+	FolderURL     string
 }
 
 func (a *App) handleCreateAgentSkillInstallToken(w http.ResponseWriter, r *http.Request) {
@@ -57,13 +72,25 @@ func (a *App) handleCreateAgentSkillInstallToken(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "invalid_platform", "select Generic or OpenClaw")
 		return
 	}
+	agentID := strings.TrimSpace(r.FormValue("agent_id"))
+	if agentID == "" {
+		writeError(w, http.StatusBadRequest, "agent_required", "select an agent")
+		return
+	}
+	if agent, err := a.store.GetAgent(user.ID, agentID); err != nil {
+		writeError(w, http.StatusInternalServerError, "agent_error", err.Error())
+		return
+	} else if agent == nil {
+		writeError(w, http.StatusNotFound, "agent_not_found", "agent not found")
+		return
+	}
 	rawToken, err := RandomToken("askl_", 32)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token_error", err.Error())
 		return
 	}
 	expiresAt := nowUTC().Add(agentSkillDownloadTokenTTL)
-	if err := a.store.SaveAgentSkillDownloadToken(user.ID, SHA256Hex(rawToken), string(platform), expiresAt); err != nil {
+	if err := a.store.SaveAgentSkillDownloadToken(user.ID, agentID, SHA256Hex(rawToken), string(platform), expiresAt); err != nil {
 		writeError(w, http.StatusInternalServerError, "token_error", err.Error())
 		return
 	}
@@ -91,7 +118,10 @@ func (a *App) handleDownloadAgentSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET required")
 		return
 	}
-	user, platform, err := a.userForAgentSkillDownload(r)
+	requestID := newRequestID()
+	w.Header().Set("X-AIWP-Request-ID", requestID)
+	installTokenDownload := strings.TrimSpace(r.URL.Query().Get("token")) != ""
+	auth, rawAgentToken, platform, err := a.agentAuthForAgentSkillDownload(r)
 	if err != nil {
 		if errors.Is(err, errAgentSkillDownloadTokenExpired) {
 			writeError(w, http.StatusUnauthorized, "download_token_expired", "download token has expired; generate a new agent skill install command from the dashboard")
@@ -108,17 +138,64 @@ func (a *App) handleDownloadAgentSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "auth_error", err.Error())
 		return
 	}
-	if user == nil || user.IsSuspended {
+	if auth == nil || auth.User == nil || auth.Agent == nil || auth.User.IsSuspended {
 		writeError(w, http.StatusUnauthorized, "auth_error", "invalid or suspended user")
 		return
 	}
-	raw, err := a.proxyTokenForUser(user.ID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "token_error", err.Error())
+	user := auth.User
+	agent := auth.Agent
+	if !installTokenDownload && a.denyIfAgentFirewallBlocks(w, r, requestID, user, agent, "agent-skill") {
 		return
 	}
-	data, err := a.buildAgentSkillZip(user.ID, raw, platform)
+	if installTokenDownload {
+		data, err := a.buildAgentSkillZip(user.ID, agent.ID, rawAgentToken, platform)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "agent_skill_error", err.Error())
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="ai-workspace-proxy-%s-skill.zip"`, platform))
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write(data); err != nil {
+			return
+		}
+		a.logUserAudit(r, user, "agent_skill_downloaded", agent.ID, agent.FriendlyName, map[string]any{
+			"agent_id":         agent.ID,
+			"agent_name":       agent.FriendlyName,
+			"agent_location":   agent.DefaultLocation,
+			"platform":         string(platform),
+			"source":           "install_token",
+			"request_id":       requestID,
+			"user_agent":       strings.TrimSpace(r.UserAgent()),
+			"remote_addr":      r.RemoteAddr,
+			"x_forwarded_for":  strings.TrimSpace(r.Header.Get("X-Forwarded-For")),
+			"x_real_ip":        strings.TrimSpace(r.Header.Get("X-Real-IP")),
+			"forwarded":        strings.TrimSpace(r.Header.Get("Forwarded")),
+			"cf_connecting_ip": strings.TrimSpace(r.Header.Get("CF-Connecting-IP")),
+		})
+		return
+	}
+	ctx := agentContext{}
+	ctx, err = agentContextForAgentRequest(r, agent, false)
 	if err != nil {
+		logEntry := a.baseRequestLogEntry(r, requestID, user, agent.ID, ctx)
+		logEntry.Service = "agent-skill"
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusForbidden
+		logEntry.ErrorMessage = err.Error()
+		a.saveRequestLog(logEntry)
+		writeError(w, http.StatusForbidden, "agent_context_required", err.Error())
+		return
+	}
+	logEntry := a.baseRequestLogEntry(r, requestID, user, agent.ID, ctx)
+	logEntry.Service = "agent-skill"
+	data, err := a.buildAgentSkillZip(user.ID, agent.ID, rawAgentToken, platform)
+	if err != nil {
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusInternalServerError
+		logEntry.ErrorMessage = err.Error()
+		a.saveRequestLog(logEntry)
 		writeError(w, http.StatusInternalServerError, "agent_skill_error", err.Error())
 		return
 	}
@@ -126,34 +203,51 @@ func (a *App) handleDownloadAgentSkill(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="ai-workspace-proxy-%s-skill.zip"`, platform))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+	if _, err := w.Write(data); err != nil {
+		logEntry.Outcome = "Fail"
+		logEntry.HTTPStatus = http.StatusOK
+		logEntry.ErrorMessage = err.Error()
+		a.saveRequestLog(logEntry)
+		return
+	}
+	logEntry.Outcome = "Success"
+	logEntry.HTTPStatus = http.StatusOK
+	a.saveRequestLog(logEntry)
 }
 
-func (a *App) userForAgentSkillDownload(r *http.Request) (*User, agentSkillPlatform, error) {
+func (a *App) agentAuthForAgentSkillDownload(r *http.Request) (*AgentAuthContext, string, agentSkillPlatform, error) {
 	if token := strings.TrimSpace(r.URL.Query().Get("token")); token != "" {
-		userID, platformValue, ok, expired, err := a.store.ConsumeAgentSkillDownloadToken(SHA256Hex(token))
+		userID, agentID, platformValue, ok, expired, err := a.store.ConsumeAgentSkillDownloadToken(SHA256Hex(token))
 		if err != nil {
-			return nil, "", err
+			return nil, "", "", err
 		}
 		if expired {
-			return nil, "", errAgentSkillDownloadTokenExpired
+			return nil, "", "", errAgentSkillDownloadTokenExpired
 		}
 		if !ok {
-			return nil, "", errAgentSkillDownloadTokenInvalid
+			return nil, "", "", errAgentSkillDownloadTokenInvalid
 		}
 		platform, ok := parseAgentSkillPlatform(platformValue)
 		if !ok {
-			return nil, "", fmt.Errorf("stored skill platform is invalid")
+			return nil, "", "", fmt.Errorf("stored skill platform is invalid")
 		}
 		user, err := a.store.FindUserByID(userID)
-		return user, platform, err
+		if err != nil || user == nil {
+			return nil, "", "", err
+		}
+		agent, err := a.store.GetAgent(userID, agentID)
+		if err != nil || agent == nil {
+			return nil, "", "", err
+		}
+		rawAgentToken, err := a.agentTokenForAgent(userID, agentID)
+		return &AgentAuthContext{User: user, Agent: agent}, rawAgentToken, platform, err
 	}
 	platform, ok := parseAgentSkillPlatform(r.URL.Query().Get("platform"))
 	if !ok {
-		return nil, "", errAgentSkillPlatformInvalid
+		return nil, "", "", errAgentSkillPlatformInvalid
 	}
-	user, err := a.currentUserFromProxyBearer(r)
-	return user, platform, err
+	auth, err := a.currentAgentFromBearer(r)
+	return auth, parseBearerToken(r.Header.Get("Authorization")), platform, err
 }
 
 func agentSkillInstallCommand(platform agentSkillPlatform, downloadURL string) string {
@@ -217,19 +311,15 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func (a *App) proxyTokenForUser(userID string) (string, error) {
-	rec, err := a.store.GetProxyTokenRecord(userID)
+func (a *App) buildAgentSkillZip(userID, agentID, agentToken string, platform agentSkillPlatform) ([]byte, error) {
+	agent, err := a.store.GetAgent(userID, agentID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if rec == nil {
-		return "", fmt.Errorf("agent Workspace API key not found")
+	if agent == nil {
+		return nil, fmt.Errorf("agent not found")
 	}
-	return a.crypto.Decrypt(rec["token_enc"])
-}
-
-func (a *App) buildAgentSkillZip(userID, proxyToken string, platform agentSkillPlatform) ([]byte, error) {
-	workspaces, err := a.agentSkillWorkspaces(userID)
+	workspaces, err := a.agentSkillWorkspaces(userID, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -271,11 +361,9 @@ func (a *App) buildAgentSkillZip(userID, proxyToken string, platform agentSkillP
 		return nil, err
 	}
 	configData := map[string]any{
-		"config_type":    "agents_workspace_api_access",
-		"proxy_url":      a.cfg.BaseURL,
-		"proxy_token":    proxyToken,
-		"skill_platform": string(platform),
-		"workspaces":     agentSkillConfigWorkspaces(workspaces),
+		"proxy_url":       a.cfg.BaseURL,
+		"agent_api_token": agentToken,
+		"workspaces":      agentSkillConfigWorkspaces(workspaces),
 	}
 	config, err := json.MarshalIndent(configData, "", "  ")
 	if err != nil {
@@ -321,29 +409,72 @@ func (a *App) buildAgentSkillZip(userID, proxyToken string, platform agentSkillP
 	return buf.Bytes(), nil
 }
 
-func (a *App) agentSkillWorkspaces(userID string) ([]agentSkillWorkspace, error) {
-	conns, err := a.store.ListGmailConnections(userID)
+func (a *App) agentSkillWorkspaces(userID, agentID string) ([]agentSkillWorkspace, error) {
+	grants, err := a.store.ListAgentWorkspaceGrants(userID, agentID)
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(conns, func(i, j int) bool {
-		return conns[i].MailboxEmail < conns[j].MailboxEmail
+	sort.Slice(grants, func(i, j int) bool {
+		return grants[i].MailboxEmail < grants[j].MailboxEmail
 	})
-	out := make([]agentSkillWorkspace, 0, len(conns))
-	for _, conn := range conns {
-		capabilities, policyID, err := a.store.WorkspacePolicyCapabilities(userID, conn.MailboxEmail)
+	out := make([]agentSkillWorkspace, 0, len(grants))
+	for _, grant := range grants {
+		conn, err := a.store.GetGmailConnection(userID, grant.MailboxEmail)
 		if err != nil {
 			return nil, err
 		}
+		if conn == nil {
+			continue
+		}
+		capabilities, reviewRequired, policyID, err := a.policyCapabilitySettings(userID, grant.PolicyID)
+		if err != nil {
+			return nil, err
+		}
+		driveFolders, err := a.store.ListAgentAllowedDriveFolderRefs(userID, agentID, grant.MailboxEmail)
+		if err != nil {
+			return nil, err
+		}
+		allowedDriveFolders := make([]agentSkillDriveFolder, 0, len(driveFolders))
+		for _, folder := range driveFolders {
+			allowedDriveFolders = append(allowedDriveFolders, agentSkillDriveFolder{
+				ReferenceName: folder.ReferenceName,
+				FolderName:    folder.FolderName,
+				FolderID:      folder.FolderID,
+				FolderURL:     folder.FolderURL,
+			})
+		}
 		out = append(out, agentSkillWorkspace{
-			Email:        conn.MailboxEmail,
-			Name:         conn.FriendlyName,
-			PolicyID:     policyID,
-			PolicyName:   a.policyDisplayNameForUser(userID, policyID),
-			Capabilities: capabilities,
+			Email:               conn.MailboxEmail,
+			Name:                conn.FriendlyName,
+			PolicyID:            policyID,
+			PolicyName:          a.policyDisplayNameForUser(userID, policyID),
+			RequireAgentMotive:  grant.RequireAgentMotive,
+			AllowedDriveFolders: allowedDriveFolders,
+			Capabilities:        capabilities,
+			ReviewRequired:      reviewRequired,
 		})
 	}
 	return out, nil
+}
+
+func (a *App) capabilitiesForPolicy(userID, policyID string) ([]string, string, error) {
+	capabilities, _, normalizedPolicyID, err := a.policyCapabilitySettings(userID, policyID)
+	return capabilities, normalizedPolicyID, err
+}
+
+func (a *App) policyCapabilitySettings(userID, policyID string) ([]string, []string, string, error) {
+	policyID = strings.TrimSpace(policyID)
+	if policyID == "" || policyID == systemPolicyID {
+		return SystemDefaultCapabilityKeys(), nil, systemPolicyID, nil
+	}
+	policy, err := a.store.GetUserPolicy(userID, policyID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if policy == nil {
+		return nil, nil, "", fmt.Errorf("policy not found")
+	}
+	return policy.EnabledCapabilities, policy.ReviewRequiredCapabilities, policyID, nil
 }
 
 func (a *App) policyDisplayNameForUser(userID, policyID string) string {
@@ -358,12 +489,29 @@ func (a *App) policyDisplayNameForUser(userID, policyID string) string {
 	return policy.Name
 }
 
-func agentSkillConfigWorkspaces(workspaces []agentSkillWorkspace) []map[string]string {
-	out := make([]map[string]string, 0, len(workspaces))
+func agentSkillConfigWorkspaces(workspaces []agentSkillWorkspace) []map[string]any {
+	out := make([]map[string]any, 0, len(workspaces))
 	for _, workspace := range workspaces {
-		out = append(out, map[string]string{
-			"email": workspace.Email,
-			"name":  workspace.Name,
+		out = append(out, map[string]any{
+			"email":                 workspace.Email,
+			"name":                  workspace.Name,
+			"policy_id":             workspace.PolicyID,
+			"policy_name":           workspace.PolicyName,
+			"require_agent_motive":  workspace.RequireAgentMotive,
+			"allowed_drive_folders": agentSkillConfigDriveFolders(workspace.AllowedDriveFolders),
+		})
+	}
+	return out
+}
+
+func agentSkillConfigDriveFolders(folders []agentSkillDriveFolder) []map[string]any {
+	out := make([]map[string]any, 0, len(folders))
+	for _, folder := range folders {
+		out = append(out, map[string]any{
+			"reference_name": folder.ReferenceName,
+			"folder_name":    folder.FolderName,
+			"folder_id":      folder.FolderID,
+			"folder_url":     folder.FolderURL,
 		})
 	}
 	return out
@@ -510,8 +658,13 @@ func buildAgentServiceSkillMarkdown(workspace agentSkillWorkspace, guidancePath,
 			return "", err
 		}
 		parts := make([]string, 0, len(keys))
+		reviewRequired := sliceToSet(workspace.ReviewRequired)
 		for _, key := range keys {
-			parts = append(parts, strings.ReplaceAll(sections[key], "WORKSPACE", workspace.Name))
+			section := strings.ReplaceAll(sections[key], "WORKSPACE", workspace.Name)
+			if reviewRequired[key] {
+				section = injectHumanApprovalNotice(section)
+			}
+			parts = append(parts, section)
 		}
 		body = strings.TrimSpace(note) + "\n\n" + strings.Join(parts, "\n\n")
 	}
@@ -531,6 +684,16 @@ func buildAgentServiceSkillMarkdown(workspace agentSkillWorkspace, guidancePath,
 		"SERVICE_GUIDANCE": guidanceBody,
 		"SERVICE_BODY":     body,
 	})
+}
+
+func injectHumanApprovalNotice(section string) string {
+	notice := "> IMPORTANT: This operation requires mandatory human review and approval before you call the proxy. Before asking for approval, provide the human operator with a clear summary of the action to be performed and all information needed for a comprehensive review. Do not continue until the human operator explicitly confirms approval with \"reviewed & approved\" or a very similar sentence carrying the same meaning in the language currently being used. After approval is obtained, include `--human-approval \"<how approval was obtained, including the approval wording quoted as written by the human>\"` on the helper command, or send the `X-AIWP-Human-Approval` header for raw proxy requests. Quote, as-is, the sentence or sentence fragment written by the human that confirms the approval. The explanation must not be empty."
+	section = strings.TrimSpace(section)
+	parts := strings.SplitN(section, "\n\n", 2)
+	if len(parts) == 1 {
+		return section + "\n\n" + notice
+	}
+	return strings.TrimSpace(parts[0]) + "\n\n" + notice + "\n\n" + strings.TrimSpace(parts[1])
 }
 
 func renderAgentWorkspaceHeader(workspace agentSkillWorkspace) (string, error) {

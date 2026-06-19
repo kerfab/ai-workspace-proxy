@@ -22,7 +22,19 @@ Run these controls before each software release. The goal is to make the codebas
 - Prefer small, explicit helpers over broad generic abstractions.
 - Use structured APIs and parsers instead of ad hoc string manipulation when practical.
 - Avoid surprising side effects. Data flow should be easy to follow from input, validation, processing, persistence, and output.
+- Keep privileged capability entrypoints clearly segmented by role or privilege domain. When a feature is reserved for a specific role, its routes should live under a dedicated, readable path namespace that reflects that privilege boundary. Example: organization-administrator operations should stay under `/org-admin`, SaaS-owner administration under `/admin`, and user-owned backend APIs under `/api/user`.
 - Add comments only where they clarify non-obvious intent, security constraints, policy behavior, tricky edge cases, or exported behavior. Do not comment obvious code.
+- Verify that all meaningful non-front-end source code files contain the approved proprietary license header. Exclude browser-facing presentation assets such as JavaScript, CSS, and similar UI-only static files.
+- Check the exact approved header text after stripping the comment markers used by the file format:
+
+  ```text
+  Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+  Proprietary software. No use, copy, modification, distribution, disclosure,
+  or reverse engineering is permitted without prior written authorization
+  from Opensense Ltd.
+  ```
+
+- Fail the quality control if the header text is missing, altered, truncated, or inconsistent across covered source files.
 
 ## 4. Performance
 
@@ -42,15 +54,17 @@ Run these controls before each software release. The goal is to make the codebas
 
 - Perform a security assessment for every release.
 - Review authentication, authorization, OAuth scope usage, token refresh, CSRF, session handling, secrets handling, proxy request forwarding, policy enforcement, logging, and generated skill packages.
+- Verify that operations restricted to role-based users or privilege-based users cannot be performed by accounts lacking those roles or privileges. Check both UI visibility and direct backend access, including bookmarked routes, AJAX endpoints, API paths, and any generated or documented endpoint surfaces.
+- Verify that privileged features remain isolated behind dedicated route namespaces that make the security boundary obvious during review. If a capability is role-specific, fail the quality control when it is mixed into generic user endpoints without a strong documented reason.
 - Confirm API keys, OAuth tokens, proxy tokens, and config secrets are never exposed in UI text, logs, generated docs, examples, commits, or error messages.
-- Report findings in `docs/security-report.md`.
+- Report findings in `docs/generated-reports/security-report.md`.
 - Each finding should include severity, affected area, impact, remediation status, and residual risk.
 - If no security issues are found, record that explicitly with the date and scope of review.
 
 ## 7. User And Agent Experience
 
 - Review all user-facing and AI-agent-facing text.
-- Error messages should be specific, useful, and safe.
+- Error messages should be specific, actionable, and aligned with the current product behavior.
 - UI labels should use consistent terminology.
 - Generated agent skill files should be clear, concise, path-safe, and aligned with current proxy behavior and policies.
 - If the generated skill package changes, verify that the download, install, update, and bootstrap instructions still match the actual files.
@@ -93,6 +107,7 @@ Maintain the detailed test plan in `docs/testing-strategy.md`.
 - Maintain automated tests for existing and new behavior. Manual user testing is not a substitute for release tests.
 - Add narrow regression tests for bug fixes and policy enforcement changes.
 - Each feature and each policy capability should have automated coverage at the lowest practical level.
+- Add or maintain regression coverage for role-gated and privilege-gated behavior. Tests must confirm that users without the required role cannot see, reach, or execute privileged operations through the UI, direct page routes, AJAX handlers, or API endpoints.
 - Unit tests should cover deterministic internal logic without calling Google:
   - policy catalog validation
   - policy allow/deny matching
@@ -114,6 +129,7 @@ Maintain the detailed test plan in `docs/testing-strategy.md`.
   - Calendar read/write permissions, including myself-only versus third-party event rules
   - Drive folder and subfolder authorization
   - Docs, Sheets, and Slides read/create/edit permissions
+  - privileged feature flows that depend on real external systems or real account state, such as organization-admin domain verification, Workspace OAuth refresh/reconnect behavior, and other role-gated capabilities as they are added
   - quota, revoked-token, invalid-request, and denied-policy errors where practical
 - Live Workspace tests must use dedicated test accounts, test folders, and disposable test data only.
 - Live Workspace tests must clean up created data whenever practical and must never run against a user's real mailbox or business data.

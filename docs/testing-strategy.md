@@ -94,7 +94,12 @@ Use these tests for:
 - policy allow/deny behavior at the HTTP layer
 - upstream error propagation
 - user-facing and AI-agent-facing error messages
+- per-user request log entries for success and failure, including request IDs, client metadata, matched policy capability/rule, and error messages
+- request-log console API behavior, including saved view settings, regex filtering, pagination, and CSV export hardening
+- required AI agent motive enforcement when an agent Workspace grant demands accountability
+- user audit logging for account, agent, Workspace, Drive folder, and settings actions
 - generated agent skill zip contents
+- role-gated and privilege-gated access control, including hidden navigation, blocked direct routes, denied AJAX handlers, and denied API entrypoints for users lacking the required role
 
 To make this clean, the app should support injectable Google endpoint URLs in tests. Production should continue using the real Google endpoints from normal configuration.
 
@@ -131,7 +136,7 @@ The test runner passes the test account email to live tests as `AIWP_TEST_WORKSP
 
 ```bash
 AIWP_TEST_BASE_URL=http://localhost:8080
-AIWP_TEST_PROXY_TOKEN=...
+AIWP_TEST_AGENT_API_TOKEN=...
 AIWP_TEST_CALENDAR_ID=primary
 AIWP_TEST_THIRD_PARTY_EMAIL=noreply@google.com
 AIWP_TEST_CALENDAR_ACL_EMAIL=noreply@google.com
@@ -139,7 +144,9 @@ AIWP_TEST_CALENDAR_ACL_EMAIL=noreply@google.com
 
 Calendar live tests default third-party event attendees and calendar sharing ACL targets to `noreply@google.com`. Override `AIWP_TEST_THIRD_PARTY_EMAIL` or `AIWP_TEST_CALENDAR_ACL_EMAIL` only when a test needs a different third-party address.
 
-Drive and Docs live tests discover the allowed Drive folder reference through the privileged backend API. The test Workspace must have at least one allowed Drive folder whose reference name contains `Test`; the first matching reference is used. That reference should allow Docs and Drive files because the tests create disposable Docs and one disposable non-Google-native Drive file inside it. Cleanup policies include the relevant native delete permissions so Google Docs, Sheets, and Slides are not deleted through the generic Drive files permission.
+Drive and Docs live tests discover the allowed Drive folder reference through the privileged backend API. The test Workspace must have at least one allowed Drive folder whose reference name contains `Test`; the first matching reference is used. Cleanup policies include the relevant native delete permissions so Google Docs, Sheets, and Slides are not deleted through the generic Drive files permission.
+
+When a privileged or role-gated feature depends on real external behavior, live tests should be added in addition to mocked coverage. Examples include organization-admin domain verification against real DNS, real Workspace OAuth refresh and reconnect flows, and future organization-admin APIs that act on real account state.
 
 Live tests must use:
 
@@ -157,34 +164,35 @@ Live tests must clean up created data whenever practical. When cleanup is imposs
 
 Automated API tests should use two different proxy keys.
 
-Standard key:
+Agent key:
 
 - Used by AI agents.
 - Used by tests to perform Google Workspace operations through the proxy.
-- Always subject to Workspace selection, policy enforcement, Drive folder enforcement, request inspection, and normal proxy restrictions.
-- Stored for local live tests in `testing/config/ai-workspace-proxy.json` as `proxy_token` or in the downloaded `agents-workspace-api-access.config.json`.
+- Always subject to agent identity, Workspace grant, grant policy, Drive folder enforcement, request inspection, and normal proxy restrictions.
+- Stored for local live tests in the downloaded `agents-workspace-api-access.config.json` as `agent_api_token` or provided with `AIWP_TEST_AGENT_API_TOKEN`.
+- Live tests that update agent grants also need the internal agent ID as test harness metadata, provided with `AIWP_TEST_AGENT_ID`.
 
 Privileged key:
 
 - Used by user-owned testing and administration tools.
-- Used by tests to create, update, delete, and apply user-level proxy configuration such as policies, default policy, Workspace policy assignment, user settings, and Drive folder references.
+- Used by tests to create, update, delete, and apply user-level proxy configuration such as policies, default policy, agent Workspace grants, user settings, and Drive folder references.
 - Must not bypass policy enforcement for Google Workspace operations.
 - Must not be included in generated agent skill packages.
-- Stored for local live tests in `testing/config/ai-workspace-proxy.json` as `user_backend_api_token` or in the downloaded `user-backend-api-access.config.json`.
+- Stored for local live tests in the downloaded `user-backend-api-access.config.json` or provided with `AIWP_TEST_USER_BACKEND_API_TOKEN`.
 - Must not be exposed to AI agents.
 
 The intended live policy test flow is:
 
 1. Use the privileged key to create or update a temporary test policy.
-2. Use the privileged key to apply that policy to the connected test Workspace account.
-3. Use the standard key to perform a true Google Workspace operation that should be allowed.
-4. Use the standard key to perform malicious or negative operations that should be denied.
-5. Use the privileged key to disable the tested capability, apply the restricted policy, and verify denial with the standard key.
-6. Use the privileged key to clean up test policies and restore the previous Workspace policy.
+2. Use the user interface or a setup fixture to attach that policy to the test agent's Workspace grant.
+3. Use the agent key to perform a true Google Workspace operation that should be allowed.
+4. Use the agent key to perform malicious or negative operations that should be denied.
+5. Disable the tested capability, attach the restricted policy to the agent grant, and verify denial with the agent key.
+6. Use the privileged key to clean up test policies and restore the previous agent grant policy.
 
 The connected test Workspace account is assumed to have already completed OAuth consent. Test automation should not attempt to fake or bypass Google OAuth consent.
 
-Local live-test configuration lives under `testing/config/`. That folder is git-ignored because it may contain real proxy tokens and Workspace identifiers.
+Local live-test configuration lives under `testing/config/`. That folder is git-ignored because it may contain real agent API keys, backend API keys, and Workspace identifiers.
 
 ## Policy Capability Coverage
 
@@ -197,6 +205,7 @@ Minimum expected coverage:
 - unit test proving the capability allows and denies the expected method/path/body combinations
 - mocked proxy test proving HTTP relay behavior is correct for at least one representative operation
 - live Workspace test for commonly used and high-risk capabilities when test credentials are available
+- live or real-environment integration test for privileged flows that depend on external state or external trust systems, when mocks cannot fully prove the security boundary
 
 For each new capability:
 
@@ -205,6 +214,12 @@ For each new capability:
 3. Add a mocked proxy integration test if the capability affects request rewriting, body inspection, or user-visible errors.
 4. Add a live test when the capability depends on Google behavior that cannot be fully represented with mocks.
 5. Include at least one true case and one malicious/negative case unless the capability is impossible to exercise safely.
+
+For each new role-gated or privilege-gated feature:
+
+1. Add a regression test proving authorized users can reach the feature.
+2. Add a regression test proving unauthorized users cannot see or execute it through UI, route, AJAX, or API paths.
+3. Add a live or real-environment test when the privilege boundary depends on real DNS, real OAuth state, real third-party account behavior, or other external trust systems.
 
 ## Live Test Safety Rules
 

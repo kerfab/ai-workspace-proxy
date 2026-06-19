@@ -1,0 +1,92 @@
+{{define "app-overlays"}}
+<div id="driveDiscoveryOverlay" class="discovery-overlay" aria-live="polite" aria-busy="true">
+  <div class="discovery-box">
+    <div class="spinner"></div>
+    <h2>Discovering Drive folders</h2>
+    <p>The proxy is discovering the folder tree and caching subfolders for agent access.</p>
+    <p>This can take a few minutes for large Google Drive folders. The dashboard will return automatically when the operation finishes.</p>
+  </div>
+</div>
+
+<div id="agentSkillSetupOverlay" class="discovery-overlay" role="dialog" aria-modal="true" aria-labelledby="agentSkillSetupTitle">
+  <div class="discovery-box setup-box">
+    <div class="overlay-title-row">
+      <h2 id="agentSkillSetupTitle">Install the AI agent skill</h2>
+      <button class="overlay-close" type="button" aria-label="Close overlay" onclick="closeAgentSkillSetupOverlay()">&times;</button>
+    </div>
+    <p>The command below downloads the skill to <code>/tmp</code>, installs it locally, runs the bootstrap, and deletes the temporary zip.</p>
+    <p id="agentSkillInstallExpires"><small></small></p>
+    <div id="agentSkillInstallError" class="flash flash-error" hidden><span></span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>
+    <div class="setup-heading">
+      <h3>With curl or wget</h3>
+      <button class="btn copy-btn" type="button" onclick="copyAgentSkillCommand('agentSkillInstallCommand', this)">COPY</button>
+    </div>
+    <pre><code id="agentSkillInstallCommand">Generating secure install command...</code></pre>
+    <p><small>The download token is single-use. If the command fails before the download starts, click the button again to generate a fresh command.</small></p>
+    <p><small id="agentSkillInstallNote"></small></p>
+    <p><small id="agentSkillPostInstallNote"></small></p>
+    <div class="setup-actions">
+      <button class="btn" type="button" onclick="closeAgentSkillSetupOverlay()">Understood</button>
+    </div>
+  </div>
+</div>
+
+<div id="agentCreateOverlay" class="discovery-overlay" role="dialog" aria-modal="true" aria-labelledby="agentCreateTitle">
+  <div class="discovery-box setup-box">
+    <div class="overlay-title-row">
+      <h2 id="agentCreateTitle">Add agent access</h2>
+      <button class="overlay-close" type="button" aria-label="Close overlay" onclick="closeAgentCreateOverlay()">&times;</button>
+    </div>
+    <form method="post" action="/agents/create" class="overlay-form" data-require-complete="true">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div class="settings-field">
+        <label for="agent_create_friendly_name">Agent name</label>
+        <input id="agent_create_friendly_name" type="text" name="friendly_name" maxlength="256" required>
+      </div>
+      <div class="settings-field">
+        <label for="agent_create_default_location">Agent location</label>
+        <input id="agent_create_default_location" type="text" name="default_location" maxlength="512" required>
+      </div>
+      <div class="overlay-actions">
+        <button class="btn warn" type="button" onclick="closeAgentCreateOverlay()">Cancel</button>
+        <button class="btn" type="submit">Confirm</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="agentEditOverlay" class="discovery-overlay" role="dialog" aria-modal="true" aria-labelledby="agentEditTitle">
+  <div class="discovery-box setup-box">
+    <div class="overlay-title-row">
+      <h2 id="agentEditTitle">Edit agent profile</h2>
+      <button class="overlay-close" type="button" aria-label="Close overlay" onclick="closeAgentEditOverlay()">&times;</button>
+    </div>
+    <form id="agentEditForm" method="post" action="/agents/update" class="overlay-form" data-ajax-form="true" data-ajax-update="agent-profile" data-suppress-success-flash="true">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="agent_id" value="">
+      <input type="hidden" name="field" value="">
+      <div class="settings-field">
+        <label id="agent_edit_value_label" for="agent_edit_value">Value</label>
+        <input id="agent_edit_value" type="text" name="value" maxlength="512" required>
+      </div>
+      <div class="overlay-actions">
+        <button class="btn warn" type="button" onclick="closeAgentEditOverlay()">Cancel</button>
+        <button class="btn" type="submit">Confirm</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="organizationAdminVerifiedOverlay" class="discovery-overlay" aria-hidden="true">
+  <div class="discovery-box setup-box">
+    <div class="overlay-title-row">
+      <h2 id="organizationAdminVerifiedOverlayTitle">Domain successfully verified</h2>
+      <button class="overlay-close" type="button" aria-label="Close overlay" onclick="closeOrganizationAdminVerifiedOverlay()">&times;</button>
+    </div>
+    <div id="organizationAdminVerifiedOverlayBody"></div>
+    <div class="overlay-actions">
+      <button class="btn" type="button" onclick="closeOrganizationAdminVerifiedOverlay()">Understood</button>
+    </div>
+  </div>
+</div>
+{{end}}

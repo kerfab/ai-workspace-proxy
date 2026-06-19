@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+# Proprietary software. No use, copy, modification, distribution, disclosure,
+# or reverse engineering is permitted without prior written authorization
+# from Opensense Ltd.
+
 import argparse
 import base64
 import json
@@ -15,6 +20,8 @@ from urllib.error import HTTPError, URLError
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 LOCAL_CONFIG_PATH = PACKAGE_ROOT / "config" / "agents-workspace-api-access.config.json"
 ACTIVE_WORKSPACE = ""
+ACTIVE_AGENT_MOTIVE = ""
+ACTIVE_HUMAN_APPROVAL = ""
 
 
 def config_path() -> Path:
@@ -38,11 +45,11 @@ def load_config():
     except Exception as e:
         die(f"Invalid JSON in {path}: {e}")
     proxy_url = str(data.get("proxy_url", "")).rstrip("/")
-    proxy_token = str(data.get("proxy_token", "")).strip()
+    agent_api_token = str(data.get("agent_api_token", "")).strip()
     if not proxy_url:
         die("Config error: proxy_url is missing")
-    if not proxy_token:
-        die("Config error: proxy_token is missing")
+    if not agent_api_token:
+        die("Config error: agent_api_token is missing")
     workspaces = data.get("workspaces", [])
     if workspaces is None:
         workspaces = []
@@ -51,10 +58,7 @@ def load_config():
     default_workspace = ""
     if len(workspaces) == 1 and isinstance(workspaces[0], dict):
         default_workspace = str(workspaces[0].get("name") or workspaces[0].get("email") or "").strip()
-    skill_platform = str(data.get("skill_platform") or "").strip().lower()
-    if skill_platform not in {"generic", "openclaw"}:
-        die("Config error: skill_platform must be generic or openclaw")
-    return proxy_url, proxy_token, default_workspace, skill_platform
+    return proxy_url, agent_api_token, default_workspace
 
 
 def read_json_file(path: str) -> Any:
@@ -65,8 +69,17 @@ def read_text_file(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
-def request_json(method: str, path: str, token: str, body: Any = None, query: Optional[Dict[str, Any]] = None):
-    proxy_url, _, _, _ = load_config()
+def agent_context_headers() -> Dict[str, str]:
+    headers: Dict[str, str] = {}
+    if ACTIVE_AGENT_MOTIVE:
+        headers["X-AIWP-Agent-Motive"] = ACTIVE_AGENT_MOTIVE
+    if ACTIVE_HUMAN_APPROVAL:
+        headers["X-AIWP-Human-Approval"] = ACTIVE_HUMAN_APPROVAL
+    return headers
+
+
+def request_json_result(method: str, path: str, token: str, body: Any = None, query: Optional[Dict[str, Any]] = None):
+    proxy_url, _, _ = load_config()
     url = proxy_url + path
     query = dict(query or {})
     if ACTIVE_WORKSPACE:
@@ -78,40 +91,7 @@ def request_json(method: str, path: str, token: str, body: Any = None, query: Op
 
     payload = None
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    if body is not None:
-        payload = json.dumps(body).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-
-    req = Request(url, data=payload, method=method.upper())
-    for k, v in headers.items():
-        req.add_header(k, v)
-
-    try:
-        with urlopen(req) as resp:
-            raw = resp.read().decode("utf-8")
-            if not raw.strip():
-                return {}
-            return json.loads(raw)
-    except HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")
-        die(f"Proxy/Workspace HTTP {e.code}: {detail}", 2)
-    except URLError as e:
-        die(f"Connection error: {e}", 2)
-
-
-def request_json_optional(method: str, path: str, token: str, body: Any = None, query: Optional[Dict[str, Any]] = None):
-    proxy_url, _, _, _ = load_config()
-    url = proxy_url + path
-    query = dict(query or {})
-    if ACTIVE_WORKSPACE:
-        query.setdefault("workspace", ACTIVE_WORKSPACE)
-    if query:
-        qs = urlencode(query, doseq=True)
-        if qs:
-            url += "?" + qs
-
-    payload = None
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    headers.update(agent_context_headers())
     if body is not None:
         payload = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
@@ -128,13 +108,24 @@ def request_json_optional(method: str, path: str, token: str, body: Any = None, 
             return json.loads(raw), ""
     except HTTPError as e:
         detail = e.read().decode("utf-8", errors="replace")
-        return None, f"HTTP {e.code}: {detail}"
+        return None, f"Proxy/Workspace HTTP {e.code}: {detail}"
     except URLError as e:
         return None, f"Connection error: {e}"
 
 
+def request_json(method: str, path: str, token: str, body: Any = None, query: Optional[Dict[str, Any]] = None):
+    payload, error = request_json_result(method, path, token, body=body, query=query)
+    if error:
+        die(error, 2)
+    return payload
+
+
+def request_json_optional(method: str, path: str, token: str, body: Any = None, query: Optional[Dict[str, Any]] = None):
+    return request_json_result(method, path, token, body=body, query=query)
+
+
 def request_bytes(method: str, path: str, token: str, query: Optional[Dict[str, Any]] = None) -> bytes:
-    proxy_url, _, _, _ = load_config()
+    proxy_url, _, _ = load_config()
     url = proxy_url + path
     query = dict(query or {})
     if ACTIVE_WORKSPACE:
@@ -146,6 +137,8 @@ def request_bytes(method: str, path: str, token: str, query: Optional[Dict[str, 
     req = Request(url, method=method.upper())
     req.add_header("Authorization", f"Bearer {token}")
     req.add_header("Accept", "*/*")
+    for k, v in agent_context_headers().items():
+        req.add_header(k, v)
     try:
         with urlopen(req) as resp:
             return resp.read()
@@ -157,7 +150,7 @@ def request_bytes(method: str, path: str, token: str, query: Optional[Dict[str, 
 
 
 def request_raw(method: str, path: str, token: str, body: Any = None, query: Optional[Dict[str, Any]] = None) -> bytes:
-    proxy_url, _, _, _ = load_config()
+    proxy_url, _, _ = load_config()
     url = proxy_url + path
     query = dict(query or {})
     if ACTIVE_WORKSPACE:
@@ -168,6 +161,7 @@ def request_raw(method: str, path: str, token: str, body: Any = None, query: Opt
             url += "?" + qs
     payload = None
     headers = {"Authorization": f"Bearer {token}", "Accept": "*/*"}
+    headers.update(agent_context_headers())
     if body is not None:
         payload = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
@@ -786,6 +780,8 @@ def build_parser():
         ),
     )
     parser.add_argument("--workspace", default="", help="Workspace friendly name or email address")
+    parser.add_argument("--agent-motive", default=os.environ.get("AIWP_AGENT_MOTIVE", ""), help="One or two sentences explaining why the request is being made")
+    parser.add_argument("--human-approval", default=os.environ.get("AIWP_HUMAN_APPROVAL", ""), help="Short explanation of how the human operator reviewed the action, approved it explicitly, and how that approval was obtained, including the approval wording quoted exactly as written by the human")
     top = parser.add_subparsers(dest="product", required=True)
 
     # Gmail
@@ -1036,17 +1032,19 @@ def build_parser():
     p.add_argument("--save-to", default="", help="Write raw response bytes to this file instead of printing JSON/text")
     p = psub.add_parser("download-skill", help="Download a fresh AI agent skill zip from the proxy; no --workspace value is needed")
     p.add_argument("--save-to", required=True, help="Local path where the downloaded zip file must be written")
-    p.add_argument("--platform", choices=["generic", "openclaw"], default="", help="Skill platform to download; defaults to config skill_platform")
+    p.add_argument("--platform", choices=["generic", "openclaw"], default="generic", help="Skill platform to download")
 
     return parser
 
 
 def main():
-    global ACTIVE_WORKSPACE
+    global ACTIVE_AGENT_MOTIVE, ACTIVE_HUMAN_APPROVAL, ACTIVE_WORKSPACE
     parser = build_parser()
     args = parser.parse_args()
-    _, token, default_workspace, skill_platform = load_config()
+    _, token, default_workspace = load_config()
     ACTIVE_WORKSPACE = (args.workspace or default_workspace).strip()
+    ACTIVE_AGENT_MOTIVE = str(args.agent_motive or "").strip()
+    ACTIVE_HUMAN_APPROVAL = str(args.human_approval or "").strip()
     workspace_optional = args.product == "proxy" and args.cmd == "download-skill"
     if not ACTIVE_WORKSPACE and not workspace_optional:
         die("A workspace is required. Pass --workspace NAME_OR_EMAIL, or use a config with exactly one workspace.")
@@ -1283,8 +1281,7 @@ def main():
                     print(text)
                     return
         elif args.cmd == "download-skill":
-            platform = args.platform or skill_platform
-            raw = request_raw("GET", "/api/agent-skill/download", token, query={"platform": platform})
+            raw = request_raw("GET", "/api/agent-skill/download", token, query={"platform": args.platform})
             out = save_bytes(raw, args.save_to)
         else:
             die("Unknown proxy command")

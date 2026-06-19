@@ -1,15 +1,15 @@
 <!-- capability: drive_files_read -->
 ### Read Drive Files
 
-Allowed: read metadata and download non-Google-native files inside allowed Drive folders. Google Docs, Sheets, and Slides use their own service files.
+Allowed: read metadata and download other file types inside allowed Drive folders. Google Docs, Sheets, and Slides use their own service files.
 
 Example commands:
 
-Use this after Drive metadata search returns a non-Google-native file `id`, or after the user provides that file `id`.
+Use this after Drive metadata search returns a file covered by Other file types, or after the user provides that file `id`.
 
 `python3 "{baseDir}/scripts/workspace_proxy_tool.py" --workspace "WORKSPACE" drive get-file --file-id FILE_ID`
 
-Use this to download non-Google-native file content.
+Use this to download content for Other file types.
 
 `python3 "{baseDir}/scripts/workspace_proxy_tool.py" --workspace "WORKSPACE" drive download --file-id FILE_ID --save-to /tmp/file.bin`
 
@@ -25,7 +25,7 @@ Use this when the cached subfolder list looks stale or incomplete.
 <!-- capability: drive_files_create -->
 ### Create Drive Files
 
-Allowed: create non-Google-native files inside allowed Drive folders.
+Allowed: create other file types inside allowed Drive folders.
 
 Example commands:
 
@@ -43,7 +43,7 @@ Use `proxy request` for Drive copy operations; `FILE_ID` comes from search.
 <!-- capability: drive_files_update -->
 ### Edit Drive Files
 
-Allowed: rename, update metadata, or upload new content for non-Google-native files in allowed Drive folders.
+Allowed: rename, update metadata, or upload new content for other file types in allowed Drive folders.
 
 Example commands:
 
@@ -59,7 +59,7 @@ Use this to apply metadata from JSON. Create `/tmp/drive_metadata.json` first.
 <!-- capability: drive_files_delete -->
 ### Delete Drive Files
 
-Allowed: permanently delete non-Google-native files in allowed Drive folders.
+Allowed: permanently delete other file types in allowed Drive folders.
 
 Example commands:
 

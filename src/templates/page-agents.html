@@ -1,0 +1,195 @@
+{{define "agents-page"}}
+{{if .AgentsError}}<div class="flash flash-error"><span>{{.AgentsError}}</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}
+{{if .AgentsSaved}}<div class="flash flash-success"><span>Agent settings updated.</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}
+{{if .AgentsDeleted}}<div class="flash flash-success"><span>Agent profile deleted.</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}
+
+{{range .SelectedAgents}}
+{{$agentID := .ID}}
+<div id="agentProfileBlock_{{.ID}}">
+<div class="card" id="agent-{{.ID}}">
+  <h2 id="agentName_{{.ID}}">{{.Name}}</h2>
+  <div id="agentSkillWarning_{{.ID}}" class="flash flash-error agent-skill-warning" {{if not .SkillStale}}hidden{{end}}>
+    <span>
+      <p><strong>SKILL UPDATE REQUIRED</strong></p>
+      <p>Update the installed skill so this agent receives the latest access settings. You may re-download the skill package or ask your agent to update the skill.</p>
+      <ul id="agentSkillWarningReasons_{{.ID}}">
+        {{range .SkillStaleReasons}}<li>{{.}}</li>{{end}}
+      </ul>
+    </span>
+    <button class="flash-close" type="button" aria-label="Dismiss agent skill update warning" onclick="dismissAgentSkillWarning('{{.ID}}')">x</button>
+  </div>
+  <p><strong>Location:</strong> <span id="agentLocation_{{.ID}}">{{.Location}}</span></p>
+  <p><strong>Access status:</strong> {{if .Enabled}}<span id="agentStatus_{{.ID}}" class="logging-status-enabled">Enabled</span>{{else}}<span id="agentStatus_{{.ID}}" class="logging-status-disabled">Access suspended</span>{{end}}</p>
+  <p><strong>Activity last 24 hours:</strong> {{.Activity24HoursLabel}}</p>
+  <p><strong>Agent ID:</strong> {{.ID}}</p>
+  <p><strong>API key:</strong> <span id="agentTokenHint_{{.ID}}">{{.TokenHint}}</span></p>
+  <div class="inline-actions">
+    <button class="btn" type="button" onclick="return showAgentEditOverlay('{{.ID}}','friendly_name')">Rename agent</button>
+    <button class="btn" type="button" onclick="return showAgentEditOverlay('{{.ID}}','default_location')">Edit location</button>
+    <a class="btn" href="/logs?agent_id={{.ID}}">View agent logs</a>
+    <form id="agentToggleForm_{{.ID}}" method="post" action="/agents/toggle" data-ajax-form="true" data-ajax-update="agent-toggle" data-flash-target="agentActionsFlash_{{.ID}}" data-suppress-success-flash="true">
+      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+      <input type="hidden" name="agent_id" value="{{.ID}}">
+      {{if .Enabled}}<button id="agentToggleButton_{{.ID}}" class="btn warn" type="submit">Suspend access</button>{{else}}<input type="hidden" name="enabled" value="1"><button id="agentToggleButton_{{.ID}}" class="btn" type="submit">Restore access</button>{{end}}
+    </form>
+    <form method="post" action="/agents/rotate" data-ajax-form="true" data-ajax-update="agent-rotate" data-flash-target="agentActionsFlash_{{.ID}}" data-confirm="Rotate this agent API key? Existing installed skills for this agent will stop working until updated.">
+      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+      <input type="hidden" name="agent_id" value="{{.ID}}">
+      <button class="btn warn" type="submit">Rotate API key</button>
+    </form>
+    <form method="post" action="/agents/delete" data-ajax-form="true" data-ajax-update="agent-delete" data-flash-target="agentActionsFlash_{{.ID}}" data-confirm="Delete this agent identity and revoke its Workspace access?">
+      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+      <input type="hidden" name="agent_id" value="{{.ID}}">
+      <button class="btn warn" type="submit">Delete agent profile</button>
+    </form>
+  </div>
+  <div id="agentActionsFlash_{{.ID}}" class="form-flash-slot" aria-live="polite"></div>
+</div>
+<div class="card">
+  <section class="log-settings-section">
+    <h3>Download skill</h3>
+    <p>The skill package is dynamically produced for this agent identity, its location, API key, Workspace grants, and current policy settings, so the generated instructions stay focused and token-efficient. If you change this agent's settings, Workspace grants, or policies, the installed skill may need to be updated.</p>
+    <p>An agent already running this skill can update it when you ask. For example: <em>"Update your AI Workspace Proxy skill."</em></p>
+    <div class="policy-toolbar skill-download-toolbar">
+      <div class="policy-field skill-download-field">
+        <label for="agentSkillPlatform_{{.ID}}">Skill package</label>
+        <select id="agentSkillPlatform_{{.ID}}" data-size-to-options="true" onchange="syncAgentSkillDownloadButton('agentSkillPlatform_{{.ID}}','agentSkillDownloadButton_{{.ID}}')">
+          <option value="">Please select the skill to download</option>
+          <option value="generic">Generic</option>
+          <option value="openclaw">OpenClaw</option>
+        </select>
+      </div>
+      <button id="agentSkillDownloadButton_{{.ID}}" class="btn" type="button" onclick="return startAgentSkillDownload('{{.ID}}','agentSkillPlatform_{{.ID}}','agentSkillDownloadButton_{{.ID}}')" disabled>Download</button>
+    </div>
+  </section>
+</div>
+<div class="card">
+  <form method="post" action="/agents/grants" class="log-settings-section" data-ajax-form="true" data-ajax-update="agent-grants" data-success-message="Workspace grants updated.">
+    <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+    <input type="hidden" name="agent_id" value="{{.ID}}">
+    <h3>Workspace grants</h3>
+    {{if .WorkspaceRows}}
+      <table class="agent-grants-table">
+        <thead><tr>
+          <th class="agent-grants-access">Access <span class="risk-help" tabindex="0" role="img" aria-label="Allow or remove this agent's access to the Workspace account." data-tooltip="Allow or remove this agent's access to the Workspace account.">(?)</span></th>
+          <th>Workspaces <span class="risk-help" tabindex="0" role="img" aria-label="The connected Workspace account this grant applies to." data-tooltip="The connected Workspace account this grant applies to.">(?)</span></th>
+          <th class="agent-grants-policy">Policy <span class="risk-help" tabindex="0" role="img" aria-label="The proxy policy used to decide which Google operations this agent can perform in this Workspace." data-tooltip="The proxy policy used to decide which Google operations this agent can perform in this Workspace.">(?)</span></th>
+          <th class="agent-grants-accountability">Agent accountability <span class="risk-help" tabindex="0" role="img" aria-label="When enforced, this agent must provide a motive for requests to this Workspace. The motive is written by the AI agent and is used only for logging purposes and agent activity reviews." data-tooltip="When enforced, this agent must provide a motive for requests to this Workspace. The motive is written by the AI agent and is used only for logging purposes and agent activity reviews.">(?)</span></th>
+          <th class="agent-grants-drive-folders">Allowed Drive folders <span class="risk-help" tabindex="0" role="img" aria-label="The registered Drive folders this agent can access in this Workspace. The proxy checks this folder access before policy permissions." data-tooltip="The registered Drive folders this agent can access in this Workspace. The proxy checks this folder access before policy permissions.">(?)</span></th>
+        </tr></thead>
+        <tbody>
+          {{range .WorkspaceRows}}
+          <tr>
+            <td class="agent-grants-access"><label class="checkbox"><input type="checkbox" name="workspace" value="{{.Email}}" {{if .Checked}}checked{{end}}> Allowed</label></td>
+            <td class="agent-grants-workspace"><strong>{{.Name}}</strong><br><small>{{.Email}}</small></td>
+            <td class="agent-grants-policy">
+              <select name="policy_{{.FormKey}}" data-size-to-options="true">
+                {{range .PolicyOptions}}<option value="{{.ID}}" title="{{.Name}}" {{if .Selected}}selected{{end}}>{{.DisplayName}}</option>{{end}}
+              </select>
+            </td>
+            <td class="agent-grants-accountability"><label class="checkbox"><input type="checkbox" name="require_agent_motive_{{.FormKey}}" {{if .RequireAgentMotive}}checked{{end}}> Enforce</label></td>
+            <td class="agent-grants-drive-folders">
+              <div id="driveFolderGrantCount_{{$agentID}}_{{.FormKey}}" class="drive-folder-grant-count">{{.AllowedDriveFolderCountLabel}}</div>
+              <button class="btn" type="button" onclick="return showDriveFolderGrantOverlay('{{$agentID}}','{{.FormKey}}')">View / Edit folders accesses</button>
+              <div id="driveFolderGrantOverlay_{{$agentID}}_{{.FormKey}}" class="discovery-overlay" role="dialog" aria-modal="true" aria-labelledby="driveFolderGrantTitle_{{$agentID}}_{{.FormKey}}" data-workspace="{{.Email}}" data-count-target="driveFolderGrantCount_{{$agentID}}_{{.FormKey}}">
+                <div class="discovery-box folder-grants-box">
+                  <div class="overlay-title-row">
+                    <h2 id="driveFolderGrantTitle_{{$agentID}}_{{.FormKey}}">Allowed Drive folders - {{.Name}}</h2>
+                    <button class="overlay-close" type="button" aria-label="Close overlay" onclick="return closeDriveFolderGrantOverlay('{{$agentID}}','{{.FormKey}}')">&times;</button>
+                  </div>
+                  <p>Select which registered Drive folders this agent can access in this Workspace. The proxy checks these folder grants before it evaluates policy permissions for Drive, Docs, Sheets, and Slides requests.</p>
+                  {{if .DriveFolderRows}}
+                    <table class="folder-grants-table">
+                      <thead><tr><th>Access</th><th>Reference Name</th><th>Real Name</th><th>Google Drive link</th></tr></thead>
+                      <tbody>
+                        {{range .DriveFolderRows}}
+                        <tr>
+                          <td><label class="checkbox"><input type="checkbox" value="{{.ID}}" data-folder-grant-checkbox data-saved="{{if .Checked}}true{{else}}false{{end}}" onchange="syncDriveFolderGrantOverlay(this.closest('.discovery-overlay'))" {{if .Checked}}checked{{end}}> Allowed</label></td>
+                          <td>{{.ReferenceName}}</td>
+                          <td>{{.FolderName}}</td>
+                          <td><a href="{{.FolderURL}}" target="_blank" rel="noopener noreferrer">{{.FolderURL}}</a></td>
+                        </tr>
+                        {{end}}
+                      </tbody>
+                    </table>
+                  {{else}}
+                    <p class="folder-grants-empty">No allowed Drive folders are registered for this Workspace yet.</p>
+                  {{end}}
+                  <div class="overlay-actions">
+                    <button class="btn secondary" type="button" onclick="return closeDriveFolderGrantOverlay('{{$agentID}}','{{.FormKey}}')">Close</button>
+                    <button class="btn" type="button" data-folder-grant-apply onclick="return applyDriveFolderGrantOverlay('{{$agentID}}','{{.FormKey}}')" disabled>Apply</button>
+                  </div>
+                  <div class="form-flash-slot" aria-live="polite"></div>
+                </div>
+              </div>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      <div class="log-settings-actions"><button class="btn" type="submit">Update Workspace grants</button></div>
+    {{else}}
+      <p>No Workspace accounts are connected yet.</p>
+    {{end}}
+  </form>
+</div>
+<div class="card">
+  <h3>Firewall</h3>
+  <div class="agent-firewall-status-row">
+    <p><strong>Firewall status:</strong> {{if .FirewallEnabled}}<span id="agentFirewallStatus_{{.ID}}" class="logging-status-enabled">Enabled</span>{{else}}<span id="agentFirewallStatus_{{.ID}}" class="firewall-status-disabled">Disabled</span>{{end}}</p>
+    <form id="agentFirewallToggleForm_{{.ID}}" method="post" action="/agents/firewall/toggle" data-ajax-form="true" data-ajax-update="agent-firewall-toggle" data-flash-target="agentFirewallFlash_{{.ID}}" data-suppress-success-flash="true" data-confirm-empty-firewall="true" data-firewall-rule-count="{{.FirewallRuleCount}}">
+      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+      <input type="hidden" name="agent_id" value="{{.ID}}">
+      <input type="hidden" name="enabled" value="{{if .FirewallEnabled}}0{{else}}1{{end}}">
+      {{if .FirewallEnabled}}<button id="agentFirewallToggleButton_{{.ID}}" class="btn warn" type="submit">Disable firewall</button>{{else}}<button id="agentFirewallToggleButton_{{.ID}}" class="btn" type="submit">Enable firewall</button>{{end}}
+    </form>
+  </div>
+  <p>When Firewall is enabled, only AI agents connecting from the allowed egress IP addresses below can communicate with the AI Workspace Proxy. This does not affect access to this user interface.</p>
+  <p>Note: the Firewall uses the effective network address of the requester and ignores HTTP headers such as X-Forwarded-For.</p>
+  <button class="btn" type="button" onclick="return showAgentFirewallAddressOverlay('{{.ID}}')">Add an IP address</button>
+  <div id="agentFirewallFlash_{{.ID}}" class="form-flash-slot" aria-live="polite"></div>
+  <p id="agentFirewallEmpty_{{.ID}}" class="agent-firewall-empty" {{if .FirewallRules}}hidden{{end}}>No IP addresses are allowed yet.</p>
+  <table id="agentFirewallTable_{{.ID}}" class="agent-firewall-table" {{if not .FirewallRules}}hidden{{end}}>
+    <thead><tr><th>Type</th><th>Date added</th><th>Value</th><th>Actions</th></tr></thead>
+    <tbody id="agentFirewallRulesBody_{{.ID}}">
+      {{range .FirewallRules}}
+      <tr id="agentFirewallRule_{{.ID}}" data-firewall-rule-id="{{.ID}}">
+        <td>{{.Type}}</td>
+        <td>{{.DateAdded}}</td>
+        <td>{{.Value}}</td>
+        <td><button class="btn warn" type="button" onclick="return deleteAgentFirewallRule('{{$agentID}}','{{.ID}}')">Remove</button></td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <div id="agentFirewallAddressOverlay_{{.ID}}" class="discovery-overlay" role="dialog" aria-modal="true" aria-labelledby="agentFirewallAddressTitle_{{.ID}}">
+    <div class="discovery-box">
+      <div class="overlay-title-row">
+        <h2 id="agentFirewallAddressTitle_{{.ID}}">Add an IP address</h2>
+        <button class="overlay-close" type="button" aria-label="Close overlay" onclick="return closeAgentFirewallAddressOverlay('{{.ID}}')">&times;</button>
+      </div>
+      <form method="post" action="/agents/firewall/add" class="overlay-form" onsubmit="return addAgentFirewallAddress(event, '{{.ID}}')">
+        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+        <input type="hidden" name="agent_id" value="{{.ID}}">
+        <div class="settings-field">
+          <label for="agentFirewallAddressInput_{{.ID}}">IPv4 or IPv6 address</label>
+          <input id="agentFirewallAddressInput_{{.ID}}" type="text" name="ip_address" placeholder="203.0.113.10 or 2001:db8::/48" required>
+          <small>You can also enter an IP range using CIDR slash notation.</small>
+        </div>
+        <div id="agentFirewallAddressFlash_{{.ID}}" class="form-flash-slot" aria-live="polite"></div>
+        <div class="overlay-actions">
+          <button class="btn secondary" type="button" onclick="return closeAgentFirewallAddressOverlay('{{.ID}}')">Cancel</button>
+          <button class="btn" type="submit">Add address</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+</div>
+{{else}}
+<div class="card">
+  <h2>{{if .SelectedAgentID}}Agent not found{{else}}No agent selected{{end}}</h2>
+  <p>{{if .SelectedAgentID}}Choose another agent from the left menu or create a new one.{{else}}Use + Add agent in the left menu to create an agent identity, then select it here to edit its Workspace access.{{end}}</p>
+</div>
+{{end}}
+{{end}}

@@ -1,0 +1,53 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>{{.AppName}}</title>
+<link rel="icon" href="/static/brand/favicon.ico" sizes="any">
+<link rel="stylesheet" href="/static/vendor/tabulator/tabulator.min.css">
+<link rel="stylesheet" href="/static/app.css">
+<meta name="csrf-token" content="{{.CSRFToken}}">
+<script>window.AIWP_APP_CONFIG = {appName: {{printf "%q" .AppName}}};</script>
+<script defer src="/static/app.js"></script>
+<script defer src="/static/vendor/tabulator/tabulator.min.js"></script>
+</head><body class="{{if .AdminMode}}admin-mode{{end}}" data-active-section="{{.ActiveSection}}">
+<div class="app-frame">
+{{template "app-overlays" .}}
+{{template "app-topbar" .}}
+
+<div class="app-shell">
+{{template "app-sidebar" .}}
+
+<main class="main">
+{{template "app-page-header" .}}
+<template data-aiwp-fragment="main-page-content:start"></template>
+<div class="main-page-content">
+
+{{if and .ShowOrgAdmin (eq .ActiveSection "admin")}}
+{{template "organization-admin-page" .}}
+{{else if .ShowPolicies}}
+{{template "policies-page" .}}
+{{else if .ShowAdminUsers}}
+{{template "admin-users-page" .}}
+{{else if .ShowAdminUser}}
+{{template "admin-user-page" .}}
+{{else if .ShowAdminAccountsPolicy}}
+{{template "admin-accounts-policy-page" .}}
+{{else if .ShowAgents}}
+{{template "agents-page" .}}
+
+{{else if .ShowLogs}}
+{{template "logs-page" .}}
+{{else if .ShowTwoFactorEnroll}}
+{{template "two-factor-enroll-page" .}}
+{{else if .ShowSettings}}
+{{template "settings-page" .}}
+{{else if .ShowDashboard}}
+{{template "dashboard-page" .}}
+{{else}}
+{{template "workspace-page" .}}
+{{end}}
+
+</div>
+<template data-aiwp-fragment="main-page-content:end"></template>
+</main>
+</div>
+</div>
+</body></html>

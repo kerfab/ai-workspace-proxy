@@ -1,3 +1,8 @@
+// Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+// Proprietary software. No use, copy, modification, distribution, disclosure,
+// or reverse engineering is permitted without prior written authorization
+// from Opensense Ltd.
+
 package main
 
 import (
@@ -49,32 +54,14 @@ func (a *App) handleUserDriveFoldersAPI(w http.ResponseWriter, r *http.Request) 
 }
 
 func driveFolderAPIRefView(folder *AllowedDriveFolder) map[string]any {
-	allowedTypes := []string{}
-	if folder.AllowDocs {
-		allowedTypes = append(allowedTypes, "docs")
-	}
-	if folder.AllowSheets {
-		allowedTypes = append(allowedTypes, "sheets")
-	}
-	if folder.AllowSlides {
-		allowedTypes = append(allowedTypes, "slides")
-	}
-	if folder.AllowDriveFiles {
-		allowedTypes = append(allowedTypes, "drive_files")
-	}
 	return map[string]any{
-		"id":                folder.ID,
-		"workspace_email":   folder.MailboxEmail,
-		"reference_name":    folder.ReferenceName,
-		"reference_key":     folder.ReferenceKey,
-		"folder_id":         folder.FolderID,
-		"folder_name":       folder.FolderName,
-		"allow_docs":        folder.AllowDocs,
-		"allow_sheets":      folder.AllowSheets,
-		"allow_slides":      folder.AllowSlides,
-		"allow_drive_files": folder.AllowDriveFiles,
-		"allowed_types":     allowedTypes,
-		"created_at":        folder.CreatedAt.Format(time.RFC3339),
-		"updated_at":        folder.UpdatedAt.Format(time.RFC3339),
+		"id":              folder.ID,
+		"workspace_email": folder.MailboxEmail,
+		"reference_name":  folder.ReferenceName,
+		"reference_key":   folder.ReferenceKey,
+		"folder_id":       folder.FolderID,
+		"folder_name":     folder.FolderName,
+		"created_at":      folder.CreatedAt.Format(time.RFC3339),
+		"updated_at":      folder.UpdatedAt.Format(time.RFC3339),
 	}
 }

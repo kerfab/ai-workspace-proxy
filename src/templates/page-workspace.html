@@ -1,0 +1,141 @@
+{{define "workspace-page"}}
+<div class="card">
+  <h2>Workspace account - {{if .WorkspaceConnected}}<span id="workspaceAccountTitleName">{{.Workspace.Name}}</span>{{else}}Not connected{{end}}</h2>
+  {{if .WorkspaceError}}<div class="flash flash-error"><span>{{.WorkspaceError}}</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}
+  {{if .WorkspaceConnected}}
+    <p><strong>Account:</strong> {{.Workspace.Email}}</p>
+    <p><strong>Google auth status:</strong> {{if .Workspace.AuthConnected}}<span style="color:#137333;font-weight:700;">Active</span>{{else}}<span style="font-weight:700;">Disconnected</span>{{end}}</p>
+    <button class="details-toggle" type="button" aria-expanded="false" aria-controls="workspaceAccountDetails" onclick="toggleDetails(this)">Show more details</button>
+    <div id="workspaceAccountDetails" class="details-panel" hidden>
+      <p><strong>Allowed Scopes:</strong></p>
+      <ul class="allowed-list">
+        {{range .Workspace.Scopes}}<li>{{.}}</li>{{end}}
+      </ul>
+      <p><strong>Connected since:</strong> {{.Workspace.ConnectedSince}}</p>
+      {{if .Workspace.AuthConnected}}
+      <p>Workspace access is refreshed automatically and remains active until access is revoked or disconnected.</p>
+      {{else}}
+      <p>Google authorization is currently disconnected for this Workspace. Its saved proxy settings remain available, but AI agents cannot use this Workspace until you reconnect it.</p>
+      {{end}}
+    </div>
+    <div class="account-actions">
+      <form method="get" action="/auth/workspace/refresh" title="Ask Google to renew this Workspace authorization and confirm the currently granted permissions. Use this when Google access stopped working or for changing access scopes.">
+        <input type="hidden" name="workspace" value="{{.Workspace.Selector}}">
+        {{if .Workspace.AuthConnected}}
+        <button class="btn" type="submit" title="Ask Google to renew this Workspace authorization and confirm the currently granted permissions. Use this when Google access stopped working or for changing access scopes.">Refresh Google auth &amp; scopes</button>
+        {{else}}
+        <span class="btn disabled" title="This action is unavailable while no Google authorization tokens are stored for this Workspace. Reconnect the Workspace first to authorize Google access again.">Refresh Google auth &amp; scopes</span>
+        {{end}}
+      </form>
+      {{if .Workspace.AuthConnected}}
+      <form method="post" action="/auth/workspace/disconnect" title="Remove the stored Google authorization tokens for this Workspace but keep its proxy settings. AI agents linked to this Workspace will stop working until you reconnect it.">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="workspace" value="{{.Workspace.Selector}}">
+        <button class="btn" type="submit" title="Remove the stored Google authorization tokens for this Workspace but keep its proxy settings. AI agents linked to this Workspace will stop working until you reconnect it.">Disconnect Workspace</button>
+      </form>
+      {{else}}
+      <form method="get" action="/auth/workspace/refresh">
+        <input type="hidden" name="workspace" value="{{.Workspace.Selector}}">
+        <button class="btn" type="submit" title="Reconnect this saved Workspace to Google without deleting its proxy settings. This restores AI agent access once Google authorization is granted again.">Reconnect workspace</button>
+      </form>
+      {{end}}
+      <form method="post" action="/workspace/delete" onsubmit="return confirm('Delete all saved proxy settings for this Workspace? This will remove its settings from the proxy. Agents configured to use this Workspace will no longer work. This has no impact on your Google account and data.');">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="workspace" value="{{.Workspace.Selector}}">
+        <button class="btn warn" type="submit" title="Delete this Workspace and its saved proxy settings from AI Workspace Proxy. This stops agents that rely on it, but it does not delete or modify anything in Google.">Delete workspace settings</button>
+      </form>
+    </div>
+    <div class="form-flash-slot" aria-live="polite">{{if .WorkspaceAccountError}}<div class="flash flash-error"><span>{{.WorkspaceAccountError}}</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}</div>
+  {{else}}
+    <p>No Workspace account selected. Connect one from the left menu.</p>
+  {{end}}
+</div>
+
+{{if .WorkspaceConnected}}
+<div class="card">
+  <h2>Workspace's friendly name</h2>
+  <p>A friendly name lets you refer to this Workspace account naturally when asking an AI agent to work with it. For example: <em>"Get my unread emails from my Perso mailbox."</em></p>
+  <form method="post" action="/workspace/account/update" class="account-update-form workspace-friendly-form" data-track-changes="true" data-ajax-form="true" data-ajax-update="workspace-friendly-name" data-suppress-success-flash="true">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <input type="hidden" name="workspace" value="{{.Workspace.Selector}}">
+    <input type="text" name="friendly_name" value="{{.Workspace.Name}}" required>
+    <button class="btn" type="submit">Update friendly name</button>
+  </form>
+  <div class="form-flash-slot" aria-live="polite"></div>
+</div>
+
+<div class="card">
+  <h2>Add an allowed Drive folder</h2>
+  <button class="details-toggle" type="button" aria-expanded="false" aria-controls="driveFolderGuidelines" data-show-label="Show help &amp; guidelines" data-hide-label="Hide help &amp; guidelines" onclick="toggleDetails(this)">Show help &amp; guidelines</button>
+  <div id="driveFolderGuidelines" class="details-panel" hidden>
+    <ul class="guidelines-list">
+      <li>This section is where you register Google Drive folders for this Workspace account.</li>
+      <li>Registering a folder here does not give AI agents access to it by itself.</li>
+      <li>Agent access is granted later, in the <code>Agent access</code> settings, where you choose which agents can use which registered folders.</li>
+      <li>The proxy only allows AI agents to work with Drive folders that you have registered and later allowed through agent access settings.</li>
+      <li>To register a folder, open Google Drive, right-click the folder you want to use, choose <code>Share</code>, then copy its link. Paste that link here and give it a unique <code>Reference Name</code>.</li>
+      <li>The <code>Reference Name</code> is the short name you and your agents can use in prompts instead of a full Google Drive link. It is also useful when different folders happen to have similar or identical names.</li>
+      <li>When a folder is registered, the proxy explores and caches its subfolder structure. This makes it possible to ask agents to work inside known subfolders without giving broader Drive access.</li>
+      <li>If subfolders are later added, moved, renamed, or removed inside a registered parent folder, use the "Refresh tree" button for that folder. This updates the proxy's cached folder structure so future agent instructions use the latest layout.</li>
+      <li>An agent can also request a tree refresh, but this should be done only when needed because it may consume Google API quota, especially for large folder trees.</li>
+    </ul>
+  </div>
+  {{if .FolderError}}<div class="flash flash-error"><span>{{.FolderError}}</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}
+  <form method="post" action="/workspace/drive-folders/add" class="folder-form" data-require-complete="true" onsubmit="return showDriveDiscoveryOverlay();">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <input type="hidden" name="workspace" value="{{.Workspace.Selector}}">
+    <input type="text" name="reference_name" placeholder="Reference Name" required>
+    <input type="text" name="folder_link" placeholder="Google Drive folder link" required>
+    <button class="btn" type="submit">Add allowed folder</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Allowed Drive folders</h2>
+  {{if .DriveFolders}}
+  <table class="drive-folders-table">
+    <thead>
+      <tr>
+        <th class="reference-column">Reference Name</th>
+        <th class="real-name-column">Real Name</th>
+        <th class="actions-column">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .DriveFolders}}
+      <tr>
+        <td>{{.ReferenceName}}</td>
+        <td>
+          <div>{{.FolderName}}</div>
+        </td>
+        <td>
+          <form id="update_{{.ID}}" method="post" action="/workspace/drive-folders/{{.ID}}/update" class="folder-edit-grid" data-track-changes="true" onsubmit="return showDriveDiscoveryOverlay();">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="workspace" value="{{$.Workspace.Selector}}">
+            <input type="text" name="reference_name" value="{{.ReferenceName}}" required>
+            <input type="text" name="folder_link" value="{{.FolderURL}}" required>
+          </form>
+          <div class="folder-action-row">
+            <button class="btn secondary" type="submit" form="update_{{.ID}}">Update</button>
+            <form method="post" action="/workspace/drive-folders/{{.ID}}/refresh" onsubmit="return showDriveDiscoveryOverlay();">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <input type="hidden" name="workspace" value="{{$.Workspace.Selector}}">
+              <button class="btn secondary" type="submit">Refresh tree</button>
+            </form>
+            <form method="post" action="/workspace/drive-folders/{{.ID}}/delete" onsubmit="return confirm('Delete this allowed folder reference?');">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <input type="hidden" name="workspace" value="{{$.Workspace.Selector}}">
+              <button class="btn warn" type="submit">Delete</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+    <p><small>No allowed Drive folders configured yet.</small></p>
+  {{end}}
+</div>
+{{end}}
+{{end}}

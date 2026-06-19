@@ -1,3 +1,8 @@
+// Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+// Proprietary software. No use, copy, modification, distribution, disclosure,
+// or reverse engineering is permitted without prior written authorization
+// from Opensense Ltd.
+
 package main
 
 import (
@@ -5,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 func main() {
@@ -18,9 +24,6 @@ func main() {
 	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o700); err != nil {
 		log.Fatalf("db dir error: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(cfg.DeniedLogPath), 0o700); err != nil {
-		log.Fatalf("logs dir error: %v", err)
-	}
 
 	db, err := OpenSQLite(cfg.DBPath)
 	if err != nil {
@@ -32,11 +35,10 @@ func main() {
 	if err := store.Init(); err != nil {
 		log.Fatalf("db init error: %v", err)
 	}
+	startLogRetentionCleanup(store)
 
 	crypto := NewCrypto(cfg.EncryptionKey)
-	deniedLogger := NewDeniedLogger(cfg.DeniedLogPath, 10*1024*1024, 5)
-
-	app := NewApp(cfg, store, crypto, deniedLogger)
+	app := NewApp(cfg, store, crypto)
 
 	server := &http.Server{
 		Addr:    cfg.BindAddr,
@@ -54,4 +56,19 @@ func main() {
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+func startLogRetentionCleanup(store *Store) {
+	if err := store.CleanupExpiredLogs(); err != nil {
+		log.Printf("log retention cleanup error: %v", err)
+	}
+	go func() {
+		ticker := time.NewTicker(30 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := store.CleanupExpiredLogs(); err != nil {
+				log.Printf("log retention cleanup error: %v", err)
+			}
+		}
+	}()
 }

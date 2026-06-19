@@ -5,7 +5,7 @@ Allowed: search contacts and directory entries to resolve people from partial na
 
 Example commands:
 
-Use this before drafting or sending an email when the user provides a name instead of an exact email address.
+Use this before any operation that involves a specific contact when the user provides a name or partial hint instead of an exact email address.
 
 `python3 "{baseDir}/scripts/workspace_proxy_tool.py" --workspace "WORKSPACE" contacts resolve --query 'Frederic' --max-results 10`
 

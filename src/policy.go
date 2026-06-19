@@ -1,3 +1,8 @@
+// Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+// Proprietary software. No use, copy, modification, distribution, disclosure,
+// or reverse engineering is permitted without prior written authorization
+// from Opensense Ltd.
+
 package main
 
 import (
@@ -34,8 +39,10 @@ type PolicyRuleSpec struct {
 }
 
 type compiledRule struct {
-	spec PolicyRuleSpec
-	rx   *regexp.Regexp
+	spec            PolicyRuleSpec
+	rx              *regexp.Regexp
+	capabilityKey   string
+	capabilityTitle string
 }
 
 type PolicyEvalContext struct {
@@ -48,8 +55,18 @@ type PolicyEvalContext struct {
 type BodyPolicyEvaluator func(ctx PolicyEvalContext, method, normalizedPath string, body []byte) (bool, string, error)
 
 type PolicyEngine struct {
-	rules        []compiledRule
-	bodyPolicies map[string]BodyPolicyEvaluator
+	rules                  []compiledRule
+	bodyPolicies           map[string]BodyPolicyEvaluator
+	reviewRequiredPolicies map[string]bool
+}
+
+type PolicyDecision struct {
+	Allowed               bool
+	Reason                string
+	CapabilityKey         string
+	CapabilityTitle       string
+	RuleName              string
+	RequiresHumanApproval bool
 }
 
 type labelModifyBody struct {
@@ -281,7 +298,6 @@ func PolicyCatalog() []PolicyCapability {
 			Group:         "Calendar",
 			Title:         "Create or import myself-only events",
 			Summary:       "Allow agents to create or import new calendar events only when the request has no third-party attendees, no room/resource attendees, no additional guests, and no organizer or creator other than the connected user.",
-			SystemDefault: true,
 			Rules: []PolicyRuleSpec{
 				ruleWithBody("calendar_events_insert_self", http.MethodPost, `^/calendar/v3/calendars/[^/]+/events$`, "calendar_event_create_self"),
 				ruleWithBody("calendar_events_import_self", http.MethodPost, `^/calendar/v3/calendars/[^/]+/events/import$`, "calendar_event_create_self"),
@@ -390,8 +406,8 @@ func PolicyCatalog() []PolicyCapability {
 		{
 			Key:               "drive_files_read",
 			Group:             "Files",
-			Title:             "Read non-Google-native files",
-			Summary:           "Allow agents to read metadata and download non-Google-native files inside allowed folders.",
+			Title:             "Read other file types",
+			Summary:           "Allow agents to read metadata and download other file types inside allowed folders.",
 			SystemDefault:     true,
 			RequiresDriveRefs: true,
 			Rules: []PolicyRuleSpec{
@@ -401,8 +417,8 @@ func PolicyCatalog() []PolicyCapability {
 		{
 			Key:               "drive_files_create",
 			Group:             "Files",
-			Title:             "Create non-Google-native files",
-			Summary:           "Allow agents to create or copy non-Google-native files inside allowed folders.",
+			Title:             "Create other file types",
+			Summary:           "Allow agents to create or copy other file types inside allowed folders.",
 			RequiresDriveRefs: true,
 			Rules: []PolicyRuleSpec{
 				ruleWithBody("drive_files_create", http.MethodPost, `^/drive/v3/files$`, "drive_file_create_drive"),
@@ -412,8 +428,8 @@ func PolicyCatalog() []PolicyCapability {
 		{
 			Key:               "drive_files_update",
 			Group:             "Files",
-			Title:             "Edit non-Google-native files",
-			Summary:           "Allow agents to rename, update metadata, or upload new content for non-Google-native files in allowed folders.",
+			Title:             "Edit other file types",
+			Summary:           "Allow agents to rename, update metadata, or upload new content for other file types in allowed folders.",
 			RequiresDriveRefs: true,
 			Rules: []PolicyRuleSpec{
 				ruleWithBody("drive_files_patch", http.MethodPatch, `^/drive/v3/files/[^/]+$`, "drive_file_kind_drive"),
@@ -424,8 +440,8 @@ func PolicyCatalog() []PolicyCapability {
 		{
 			Key:               "drive_files_delete",
 			Group:             "Files",
-			Title:             "Delete non-Google-native files",
-			Summary:           "Allow agents to permanently delete non-Google-native files in allowed folders.",
+			Title:             "Delete other file types",
+			Summary:           "Allow agents to permanently delete other file types in allowed folders.",
 			RequiresDriveRefs: true,
 			Rules: []PolicyRuleSpec{
 				ruleWithBody("drive_files_delete", http.MethodDelete, `^/drive/v3/files/[^/]+$`, "drive_file_kind_drive"),
@@ -722,11 +738,21 @@ func SystemDefaultCapabilityKeys() []string {
 }
 
 func NewPolicyEngine(capabilityKeys []string) (*PolicyEngine, error) {
+	return NewPolicyEngineWithReview(capabilityKeys, nil)
+}
+
+func NewPolicyEngineWithReview(capabilityKeys []string, reviewRequiredKeys []string) (*PolicyEngine, error) {
 	allowed := sliceToSet(capabilityKeys)
 	catalog := PolicyCatalog()
 	engine := &PolicyEngine{
-		rules:        []compiledRule{},
-		bodyPolicies: defaultBodyPolicies(allowed),
+		rules:                  []compiledRule{},
+		bodyPolicies:           defaultBodyPolicies(allowed),
+		reviewRequiredPolicies: map[string]bool{},
+	}
+	for _, key := range reviewRequiredKeys {
+		if allowed[key] {
+			engine.reviewRequiredPolicies[key] = true
+		}
 	}
 	for _, cap := range catalog {
 		if !allowed[cap.Key] {
@@ -737,7 +763,7 @@ func NewPolicyEngine(capabilityKeys []string) (*PolicyEngine, error) {
 			if err != nil {
 				return nil, fmt.Errorf("invalid path_regex for %s: %w", spec.Name, err)
 			}
-			engine.rules = append(engine.rules, compiledRule{spec: spec, rx: rx})
+			engine.rules = append(engine.rules, compiledRule{spec: spec, rx: rx, capabilityKey: cap.Key, capabilityTitle: cap.Title})
 		}
 	}
 	return engine, nil
@@ -820,6 +846,14 @@ func defaultBodyPolicies(allowedCapabilities map[string]bool) map[string]BodyPol
 var errPolicyRuleNoMatch = errors.New("policy rule does not match request details")
 
 func (p *PolicyEngine) Evaluate(method, normalizedPath string, body []byte, ctx PolicyEvalContext) (bool, string, error) {
+	decision, err := p.EvaluateDecision(method, normalizedPath, body, ctx)
+	if err != nil {
+		return false, "", err
+	}
+	return decision.Allowed, decision.Reason, nil
+}
+
+func (p *PolicyEngine) EvaluateDecision(method, normalizedPath string, body []byte, ctx PolicyEvalContext) (PolicyDecision, error) {
 	noMatchReason := ""
 	for _, rule := range p.rules {
 		if rule.spec.Method != method {
@@ -829,11 +863,11 @@ func (p *PolicyEngine) Evaluate(method, normalizedPath string, body []byte, ctx 
 			continue
 		}
 		if rule.spec.BodyPolicy == "" {
-			return true, rule.spec.Name, nil
+			return p.allowedPolicyDecision(rule), nil
 		}
 		evaluate, ok := p.bodyPolicies[rule.spec.BodyPolicy]
 		if !ok {
-			return false, "", fmt.Errorf("missing body policy %q", rule.spec.BodyPolicy)
+			return PolicyDecision{}, fmt.Errorf("missing body policy %q", rule.spec.BodyPolicy)
 		}
 		allowed, reason, err := evaluate(ctx, method, normalizedPath, body)
 		if err != nil {
@@ -843,17 +877,28 @@ func (p *PolicyEngine) Evaluate(method, normalizedPath string, body []byte, ctx 
 				}
 				continue
 			}
-			return false, "", err
+			return PolicyDecision{}, err
 		}
 		if !allowed {
-			return false, reason, nil
+			return PolicyDecision{Allowed: false, Reason: reason}, nil
 		}
-		return true, rule.spec.Name, nil
+		return p.allowedPolicyDecision(rule), nil
 	}
 	if noMatchReason != "" {
-		return false, noMatchReason, nil
+		return PolicyDecision{Allowed: false, Reason: noMatchReason}, nil
 	}
-	return false, "no policy capability allowed this operation", nil
+	return PolicyDecision{Allowed: false, Reason: "no policy capability allowed this operation"}, nil
+}
+
+func (p *PolicyEngine) allowedPolicyDecision(rule compiledRule) PolicyDecision {
+	return PolicyDecision{
+		Allowed:               true,
+		Reason:                rule.spec.Name,
+		CapabilityKey:         rule.capabilityKey,
+		CapabilityTitle:       rule.capabilityTitle,
+		RuleName:              rule.spec.Name,
+		RequiresHumanApproval: p.reviewRequiredPolicies[rule.capabilityKey],
+	}
 }
 
 func validateGmailLabelModifyPolicy(allowedCapabilities map[string]bool, normalizedPath string, body []byte) error {
@@ -1155,7 +1200,7 @@ func drivePolicyKindPermissionName(kind string) string {
 	case "slides":
 		return "the Google Slides permission"
 	case "drive":
-		return "the non-Google-native files permission"
+		return "the Other file types permission"
 	default:
 		return "a matching Google-native file permission"
 	}
@@ -1170,7 +1215,7 @@ func drivePolicyKindLabel(kind string) string {
 	case "slides":
 		return "a Google Slides presentation"
 	case "drive":
-		return "a non-Google-native file"
+		return "a file covered by Other file types"
 	default:
 		return "a Google-native file"
 	}
@@ -1310,16 +1355,24 @@ func numberFromAny(raw any) float64 {
 	}
 }
 
-func PolicyCapabilitiesForSelection(selected map[string]bool) []map[string]any {
+func PolicyCapabilitiesForSelection(selected map[string]bool, reviewRequiredArg ...map[string]bool) []map[string]any {
+	reviewRequired := map[string]bool{}
+	if len(reviewRequiredArg) > 0 && reviewRequiredArg[0] != nil {
+		reviewRequired = reviewRequiredArg[0]
+	}
 	catalog := PolicyCatalog()
 	out := make([]map[string]any, 0, len(catalog))
 	for _, cap := range catalog {
-		out = append(out, policyCapabilityView(cap, selected))
+		out = append(out, policyCapabilityView(cap, selected, reviewRequired))
 	}
 	return out
 }
 
-func PolicyCapabilityGroupsForSelection(selected map[string]bool) []map[string]any {
+func PolicyCapabilityGroupsForSelection(selected map[string]bool, reviewRequiredArg ...map[string]bool) []map[string]any {
+	reviewRequired := map[string]bool{}
+	if len(reviewRequiredArg) > 0 && reviewRequiredArg[0] != nil {
+		reviewRequired = reviewRequiredArg[0]
+	}
 	groupOrder := []string{"Calendar", "Contacts", "Drive", "Gmail"}
 	grouped := map[string]map[string][]map[string]any{}
 	for _, cap := range PolicyCatalog() {
@@ -1328,7 +1381,7 @@ func PolicyCapabilityGroupsForSelection(selected map[string]bool) []map[string]a
 		if grouped[app] == nil {
 			grouped[app] = map[string][]map[string]any{}
 		}
-		grouped[app][subgroup] = append(grouped[app][subgroup], policyCapabilityView(cap, selected))
+		grouped[app][subgroup] = append(grouped[app][subgroup], policyCapabilityView(cap, selected, reviewRequired))
 	}
 	out := make([]map[string]any, 0, len(groupOrder))
 	for _, name := range groupOrder {
@@ -1423,7 +1476,7 @@ func policyCapabilitySubgroup(cap PolicyCapability) string {
 	return cap.Group
 }
 
-func policyCapabilityView(cap PolicyCapability, selected map[string]bool) map[string]any {
+func policyCapabilityView(cap PolicyCapability, selected, reviewRequired map[string]bool) map[string]any {
 	riskScore := policyRiskScore(cap.Key)
 	return map[string]any{
 		"Key":               cap.Key,
@@ -1431,6 +1484,7 @@ func policyCapabilityView(cap PolicyCapability, selected map[string]bool) map[st
 		"Title":             cap.Title,
 		"Summary":           cap.Summary,
 		"Checked":           selected[cap.Key],
+		"ReviewRequired":    selected[cap.Key] && reviewRequired[cap.Key],
 		"SystemDefault":     cap.SystemDefault,
 		"RequiresDriveRefs": cap.RequiresDriveRefs,
 		"RiskScore":         riskScore,
@@ -1536,10 +1590,10 @@ var policyCapabilityRiskDescriptions = map[string]string{
 	"calendar_access_manage":        "High because it can create, update, delete, or watch calendar access rules. Misuse can grant or remove calendar access.",
 	"calendar_settings_read":        "Medium because it reads Calendar user settings. These are configuration details rather than ordinary content.",
 
-	"drive_files_read":         "Low because it only reads or downloads non-Google-native files already inside allowed folders. It does not modify files or read Google Docs, Sheets, or Slides content.",
-	"drive_files_create":       "Medium because it can create or copy non-Google-native files inside allowed folders. In shared folders this can create clutter or visible business artifacts.",
-	"drive_files_update":       "Medium because it can rename, update metadata, or upload content for non-Google-native files in allowed folders. It does not edit Google Docs, Sheets, or Slides content.",
-	"drive_files_delete":       "High because it can permanently delete non-Google-native files in allowed folders. Deletion can remove important data.",
+	"drive_files_read":         "Low because it only reads or downloads other file types already inside allowed folders. It does not modify files or read Google Docs, Sheets, or Slides content.",
+	"drive_files_create":       "Medium because it can create or copy other file types inside allowed folders. In shared folders this can create clutter or visible business artifacts.",
+	"drive_files_update":       "Medium because it can rename, update metadata, or upload content for other file types in allowed folders. It does not edit Google Docs, Sheets, or Slides content.",
+	"drive_files_delete":       "High because it can permanently delete other file types in allowed folders. Deletion can remove important data.",
 	"drive_permissions_read":   "Low because it only reads file sharing permissions. It does not change access or expose secrets.",
 	"drive_permissions_manage": "High because it can create, update, or delete file permissions. Misuse can expose files or remove legitimate access.",
 	"drive_comments_read":      "Low because it only reads comments and replies on files. It does not post, edit, resolve, or delete comments.",

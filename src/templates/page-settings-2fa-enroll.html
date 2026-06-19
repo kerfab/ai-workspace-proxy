@@ -1,0 +1,48 @@
+{{define "two-factor-enroll-page"}}
+<div class="card">
+  <h2>Two-factor enrollment</h2>
+  {{if .TwoFactor.Error}}<div class="flash flash-error"><span>{{.TwoFactor.Error}}</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}
+
+  {{if .TwoFactor.Enabled}}
+  <p>Two-factor authentication is already enabled for your account.</p>
+  <div class="inline-actions">
+    <a class="btn" href="{{.TwoFactor.BackURL}}">Continue</a>
+  </div>
+  {{else if .TwoFactor.Pending}}
+  {{if .TwoFactor.OrgManaged}}
+  <p>Your organization requires two-factor authentication. Complete enrollment before continuing to the User Interface.</p>
+  {{else}}
+  <p>Scan this QR code with your authenticator app, or enter the secret manually if needed.</p>
+  {{end}}
+  <p>The account will appear as <strong>{{.TwoFactor.AppName}}</strong> for <strong>{{.TwoFactor.AccountEmail}}</strong>.</p>
+  <div class="inline-actions" style="align-items:flex-start;">
+    <img src="{{.TwoFactor.QRCodeURL}}" alt="2FA enrollment QR code" width="256" height="256" style="border:1px solid #ddd;border-radius:0;background:#fff;padding:.5rem;">
+    <div>
+      <p><strong>Manual setup secret:</strong> <code>{{.TwoFactor.ManualSecret}}</code></p>
+      {{if .TwoFactor.PendingSetAt}}<p>Enrollment started: {{.TwoFactor.PendingSetAt}}</p>{{end}}
+      <div class="inline-actions" style="align-items:flex-end;margin-top:.5rem;">
+        <form method="post" action="/settings/2fa/confirm" class="settings-form">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <input type="hidden" name="back" value="{{.TwoFactor.BackURL}}">
+          <div class="settings-field">
+            <label for="twoFactorConfirmCode">Authentication code</label>
+            <input id="twoFactorConfirmCode" type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+          </div>
+          <button class="btn" type="submit">Confirm code</button>
+        </form>
+        <form method="post" action="/settings/2fa/cancel">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <input type="hidden" name="back" value="{{.TwoFactor.BackURL}}">
+          <button class="btn secondary" type="submit" {{if not .TwoFactor.CanCancel}}disabled{{end}}>{{if .TwoFactor.CanCancel}}Cancel 2FA enrollment{{else}}Managed by your organization{{end}}</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {{else}}
+  <p>Two-factor authentication is not enabled in your user settings.</p>
+  <div class="inline-actions">
+    <a class="btn" href="{{.TwoFactor.BackURL}}">Continue</a>
+  </div>
+  {{end}}
+</div>
+{{end}}

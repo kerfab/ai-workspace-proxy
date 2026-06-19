@@ -1,0 +1,50 @@
+{{define "dashboard-page"}}
+<div class="card">
+  <div class="dashboard-kpi-grid">
+    {{range .DashboardKPIs}}
+    <section class="dashboard-kpi-tile">
+      <p class="dashboard-kpi-value">{{.Value}}</p>
+      <p class="dashboard-kpi-label">{{range .Lines}}<span class="dashboard-kpi-label-line">{{.}}</span>{{end}}</p>
+    </section>
+    {{end}}
+  </div>
+</div>
+<div class="card">
+  <h2>Get started</h2>
+  <div class="dashboard-get-started-grid">
+    <section class="dashboard-get-started-panel">
+      <h3>What AI Workspace Proxy does</h3>
+      <p>AI Workspace Proxy is the control layer between your AI agents and your Google Workspace data. It lets you decide which Workspace accounts, permissions, Drive folders, and agent identities are allowed before requests reach Google.</p>
+      <ul>
+        <li><strong>Workspace management:</strong> connect one or more Google Workspace accounts and organize them with friendly names.</li>
+        <li><strong>Permissions control:</strong> create custom access policies so agents receive only the operations you want them to use.</li>
+        <li><strong>Agent access:</strong> create agent profiles, attach Workspace grants, and generate skill packages that match the current settings.</li>
+        <li><strong>Auditing:</strong> review activity logs to understand what happened, when it happened, and which identity performed it.</li>
+      </ul>
+    </section>
+    <section class="dashboard-get-started-panel">
+      <h3>Fast-track setup</h3>
+      <p>You can usually get a first agent running in a few short steps:</p>
+      <ul>
+        <li><strong>1.</strong> Add a Workspace and complete Google authorization for the correct Google account.</li>
+        <li><strong>2.</strong> Register any Drive folders you want the proxy to manage for that Workspace.</li>
+        <li><strong>3.</strong> Review the <strong>Permissions editor</strong> and create a custom policy if read-only access is not enough.</li>
+        <li><strong>4.</strong> Create an agent in <strong>Agent access</strong>, attach one or more Workspace grants, then choose the policy for each grant.</li>
+        <li><strong>5.</strong> Download the generated skill for that agent and install it in your AI agent execution platform, for example OpenClaw.</li>
+        <li><strong>6.</strong> After changing agent, Workspace, Drive, or permission settings, update the agent skill again when the interface tells you it is needed.</li>
+      </ul>
+    </section>
+    <section class="dashboard-get-started-panel">
+      <h3>Security guidelines</h3>
+      <p>Good defaults help, but careful setup still matters. These are the habits worth keeping from day one:</p>
+      <ul>
+        <li>Give each agent only the Workspace access, Drive folders, and permissions it truly needs.</li>
+        <li>Use agent accountability, firewall rules, and human review requirements when a workflow needs stronger oversight.</li>
+        <li>Check activity logs regularly, especially after policy changes, agent updates, or unusual behavior.</li>
+        <li>Protect your own access with a reasonable session duration and optional two-factor authentication.</li>
+        <li>The proxy keeps the Google Workspace access tokens on your behalf, while each agent uses its own unique proxy key. If an agent's proxy key is ever exposed or no longer trusted, rotate it immediately.</li>
+      </ul>
+    </section>
+  </div>
+</div>
+{{end}}

@@ -61,7 +61,6 @@ docker run -d \
 Default paths inside container
 ------------------------------
 - DB_PATH=/data/db/ai_workspace_proxy.sqlite3
-- DENIED_LOG_PATH=/data/logs/denied.log
 
 Notes
 -----

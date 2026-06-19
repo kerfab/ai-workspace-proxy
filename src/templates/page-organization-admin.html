@@ -1,0 +1,59 @@
+{{define "organization-admin-page"}}
+<div class="card">
+  <h2>{{if .OrganizationAdmin.ShowClaimIntro}}Claim the administration for your domain{{else}}Organization admin{{end}}</h2>
+  <p><strong>Domain verification status:</strong> <span id="organizationAdminStatusText" class="{{.OrganizationAdmin.StatusClass}}">{{.OrganizationAdmin.StatusText}}</span></p>
+  <p id="organizationAdminVerifiedAt" {{if not .OrganizationAdmin.Verified}}hidden{{end}}><strong>Verified on:</strong> <span id="organizationAdminVerifiedAtValue">{{.OrganizationAdmin.VerifiedAtDisplay}}</span></p>
+  <div id="organizationAdminClaimIntro" {{if not .OrganizationAdmin.ShowClaimIntro}}hidden{{end}}>
+    <p>This domain does not have any registered administrators yet. Claim administration to allow the management of other user accounts under this domain.</p>
+    <button class="btn" type="button" onclick="return showOrganizationAdminClaimFlow()">Claim administration for the domain</button>
+  </div>
+  <div id="organizationAdminPendingBlock" {{if or .OrganizationAdmin.Verified .OrganizationAdmin.ShowClaimIntro}}hidden{{end}}>
+    <p>To authorize this account as an administrator for <strong>{{.OrganizationAdmin.Domain}}</strong>, verify that you control the domain by publishing a DNS TXT record.</p>
+    <p>Once validation succeeds, your account becomes the first authorized organization administrator in AI Workspace Proxy.</p>
+    <div class="org-admin-copy-grid">
+      <div class="org-admin-copy-card">
+        <h3>TXT record name</h3>
+        <p>Create this DNS TXT record name inside the DNS zone for <strong>{{.OrganizationAdmin.TXTRecordZone}}</strong>:</p>
+        <div class="org-admin-copy-line">
+          <button class="copy-icon-btn" type="button" onclick="copyElementText('organizationAdminTXTRecordName', this)" aria-label="Copy TXT record name" title="Copy TXT record name">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+              <path d="M5 15V6a2 2 0 0 1 2-2h9"></path>
+            </svg>
+          </button>
+          <code id="organizationAdminTXTRecordName">{{.OrganizationAdmin.TXTRecordName}}</code>
+        </div>
+      </div>
+      <div class="org-admin-copy-card">
+        <h3>TXT record value</h3>
+        <p>Publish this exact TXT value:</p>
+        <div class="org-admin-copy-line">
+          <button class="copy-icon-btn" type="button" onclick="copyElementText('organizationAdminTXTRecordValue', this)" aria-label="Copy TXT record value" title="Copy TXT record value">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+              <path d="M5 15V6a2 2 0 0 1 2-2h9"></path>
+            </svg>
+          </button>
+          <code id="organizationAdminTXTRecordValue">{{.OrganizationAdmin.TXTRecordValue}}</code>
+        </div>
+      </div>
+    </div>
+    <ol class="org-admin-steps">
+      <li>Add the TXT record in the DNS zone for <strong>{{.OrganizationAdmin.Domain}}</strong>.</li>
+      <li>Wait for the DNS change to propagate publicly.</li>
+      <li>Click the validation button below to confirm the record is visible.</li>
+      <li>Once the domain is verified, the TXT record can be safely deleted.</li>
+    </ol>
+    <p><small>The proxy verifies the full DNS name <code>{{.OrganizationAdmin.ValidationTargetFQDN}}</code> directly against the domain's authoritative DNS servers.</small></p>
+    <p><small>DNS propagation can take a few minutes depending on your DNS provider.</small></p>
+    <form id="organizationAdminVerificationForm" method="post" action="/admin/domain/validate" data-ajax-form="true" data-ajax-update="org-domain-verify" data-suppress-success-flash="true">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <button id="organizationAdminVerifyButton" class="btn" type="submit">Validate organization domain</button>
+    </form>
+  </div>
+  <div id="organizationAdminFlash" class="form-flash-slot" aria-live="polite">{{if .OrganizationAdminError}}<div class="flash flash-error"><span>{{.OrganizationAdminError}}</span><button class="flash-close" type="button" aria-label="Close message" onclick="dismissFlash(this)">x</button></div>{{end}}</div>
+  <div id="organizationAdminVerifiedBlock" {{if not .OrganizationAdmin.Verified}}hidden{{end}}>
+    <p class="org-admin-verified-note"><strong><span class="logging-status-enabled">Verified</span></strong>: you are the AI Workspace Proxy admin for the domain. The DNS TXT record can now be safely deleted.</p>
+  </div>
+</div>
+{{end}}

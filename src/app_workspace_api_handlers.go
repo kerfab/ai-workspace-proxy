@@ -1,3 +1,8 @@
+// Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+// Proprietary software. No use, copy, modification, distribution, disclosure,
+// or reverse engineering is permitted without prior written authorization
+// from Opensense Ltd.
+
 package main
 
 import (
@@ -45,14 +50,13 @@ func (a *App) handleUserWorkspacesAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) workspaceAPIView(userID string, conn *GmailConnection) map[string]any {
-	policyID := strings.TrimSpace(conn.PolicyID)
-	if policyID == "" {
-		policyID = systemPolicyID
-	}
 	return map[string]any{
-		"email":       conn.MailboxEmail,
-		"name":        conn.FriendlyName,
-		"policy_id":   policyID,
-		"policy_name": a.policyDisplayNameForUser(userID, policyID),
+		"email":          conn.MailboxEmail,
+		"name":           conn.FriendlyName,
+		"auth_connected": workspaceHasStoredOAuth(conn),
+		"connection_status": map[bool]string{
+			true:  "Active",
+			false: "Disconnected",
+		}[workspaceHasStoredOAuth(conn)],
 	}
 }

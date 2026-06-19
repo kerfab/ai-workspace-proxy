@@ -1,12 +1,14 @@
 #!/bin/sh
+# Copyright (c) 2026 Opensense Ltd. (Hong Kong). All rights reserved.
+# Proprietary software. No use, copy, modification, distribution, disclosure,
+# or reverse engineering is permitted without prior written authorization
+# from Opensense Ltd.
+
 set -eu
 
 : "${DB_PATH:=/data/db/ai_workspace_proxy.sqlite3}"
-: "${DENIED_LOG_PATH:=/data/logs/denied.log}"
 
 mkdir -p /data/db
-mkdir -p /data/logs
 mkdir -p "$(dirname "$DB_PATH")"
-mkdir -p "$(dirname "$DENIED_LOG_PATH")"
 
 exec "$@"
